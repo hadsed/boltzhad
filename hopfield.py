@@ -36,17 +36,17 @@ neurons = data[0].size
 # covariance matrix
 K = np.cov(data.T)
 # weight matrix (tiny random numbers)
-W = rng.rand(neurons,neurons)*1e-3
+W = rng.rand(neurons,neurons)*1e-4
 # number of MCMC steps
-nsteps = 100
+nsteps = 1000
 # learning rate
 eta = 0.1
 # temperature
-temp = 1e-1
+temp = 1e-3
 # state vector
 states = []
 # train W using MCMC for each training vector
-for tvec in data:
+for tvec in rng.permutation(data):
     # initialize state to the training vector
     state = tvec
     # chain steps
@@ -65,9 +65,10 @@ for tvec in data:
                 states.append(state_c)
             else:
                 states.append(state)
-    # make sure we only take one sample per sweep (on avg)
-    Zexp = np.sum([ np.outer(s,s) for s in states[::neurons] ], 
-                  axis=0)/len(states)
+    # let first half of the chain be "burn in" phase
+    stotal = len(states)
+    Zexp = np.sum([ np.outer(s,s) for s in states[stotal/2:] ], 
+                  axis=0)/stotal
     # update the weights
     W += (Zexp + K)*eta
 
