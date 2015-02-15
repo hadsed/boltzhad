@@ -5,6 +5,7 @@ import numpy as np
 import scipy as sp
 import scipy.sparse as sps
 import scipy.optimize as spo
+import pyximport; pyximport.install()
 
 
 def isingenergy(z, J):
@@ -28,65 +29,73 @@ def bitstr2spins(vec):
 seed = None
 rng = np.random.RandomState(seed)
 # training data
+# 8-neuron network
 data = ['10000001', 
-        '10101010']
-data = np.array([ bitstr2spins(v) for v in data ])
+        '10101010',
+        # '00001111',
+        '11100111']
+# 20-neuron network
+# data = ['10000000000000000001', 
+#         '10101010101010101010',
+#         '11100111001110011100']
+datasp = rng.permutation([ bitstr2spins(v) for v in data ])
 # num of neurons
-neurons = data[0].size
+neurons = datasp[0].size
 # covariance matrix
-K = np.cov(data.T)
+K = np.cov(datasp.T)
 # weight matrix (tiny random numbers)
-W = rng.rand(neurons,neurons)*1e-4
+W = rng.rand(neurons,neurons)*1e-8
 # number of MCMC steps
-nsteps = 1000
+nsteps = 10
 # learning rate
-eta = 0.1
+eta = 0.01
 # temperature
-temp = 1e-3
+temp = 1.0
+# training epochs
+epochs = 10
 # state vector
 states = []
-# train W using MCMC for each training vector
-for tvec in rng.permutation(data):
-    # initialize state to the training vector
-    state = tvec
-    # chain steps
-    for istep in xrange(nsteps):
-        # do one sweep over the network
-        for idxn in rng.permutation(range(neurons)):
-            # calculate energy difference
-            state_c = state.copy()
-            state_c[idxn] *= -1
-            ediff = isingenergy(state_c,W) - isingenergy(state,W)
-            # update rule
-            # alpha = min(1, np.exp(ediff/temp))  # Metropolis
-            alpha = min(1, 1./(1+np.exp(ediff/temp)))  # Gibbs
-            # decide to flip or not, keep as new chain sample either way
-            if alpha > rng.uniform(0,1):
-                states.append(state_c)
-            else:
-                states.append(state)
-    # let first half of the chain be "burn in" phase
-    stotal = len(states)
-    Zexp = np.sum([ np.outer(s,s) for s in states[stotal/2:] ], 
-                  axis=0)/stotal
-    # update the weights
-    W += (Zexp + K)*eta
+# training epochs
+for ep in xrange(epochs):
+    # train W using MCMC for each training vector
+    for tvec in datasp:
+        # initialize state to the training vector
+        state = tvec.copy()
+        # chain steps
+        for istep in xrange(nsteps):
+            # do one sweep over the network
+            for idxn in rng.permutation(range(neurons)):
+                # calculate energy difference
+                ediff = 0.0
+                for nb in xrange(neurons):
+                    if nb != idxn:
+                        ediff += 2.0*state[idxn]*(W[idxn,nb]*state[nb])
+                # update rule
+                alpha = min(1, 1./(1+np.exp(ediff/temp)))  # Gibbs
+                # decide to flip or not, keep as new chain sample either way
+                if alpha > rng.uniform(0,1):
+                    state[idxn] *= -1
+        # update the weights (difference between data and model sample)
+        W += (np.outer(tvec,tvec) - np.outer(state,state))*eta
+        # make sure we have no self-connections
+        np.fill_diagonal(W, 0.0)
 
 # Print out data
-print("Training data:")
-for dvec in data:
+print("Training data (in order given to model):")
+for dvec in datasp:
     bvec = spins2bits(dvec)
     print(reduce(lambda x,y: x+y, [ str(k) for k in bvec ]))
 # Print out energies from trained model
-print("All possible states and their energies:")
-results = []
-for b in [ bin(x)[2:].rjust(neurons, '0') for x in range(2**neurons) ]:
-    bvec = np.array([ int(k) for k in b ])
-    svec = bitstr2spins(b)
-    bstr = reduce(lambda x,y: x+y, [ str(k) for k in bvec ])
-    results.append([bstr, isingenergy(svec, W)])
-for res in sorted(results, key=lambda x:x[1])[:8]:
-    print res
-for res in sorted(results, key=lambda x:x[1])[-5:]:
-    print res
-        
+print("Lowest states and their energies:")
+results = [0]*(2**neurons)
+# enumerate all possible states and their energies
+for ib, b in enumerate([ bin(x)[2:].rjust(neurons, '0') 
+                         for x in range(2**neurons) ]):
+    svec = bitstr2spins(np.array([ int(k) for k in b ]))
+    results[ib] = [b, isingenergy(svec, W)]
+# sort and print the most likely ones
+for res in sorted(results, key=lambda x:x[1])[:2*neurons]:
+    if res[0] in data:
+        print(res+['training vector'])
+    else:
+        print(res)
