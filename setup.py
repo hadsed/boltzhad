@@ -8,6 +8,11 @@ extensions = [
         "boltzhad.hopfield", ["boltzhad/hopfield.pyx"],
         # extra_compile_args=['-fopenmp'],
         # extra_link_args=['-fopenmp']
+        ),
+    Extension(
+        "boltzhad.sa", ["boltzhad/sa.pyx"],
+        extra_compile_args=['-fopenmp'],
+        extra_link_args=['-fopenmp']
         )
     ]
 

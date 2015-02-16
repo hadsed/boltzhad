@@ -14,8 +14,8 @@ import scipy.io as sio
 import matplotlib.pyplot as plt
 
 import boltzhad.hopfield as hopfield
-import piqmc.sa as sa
-import piqmc.tools as tools
+import boltzhad.sa as sa
+
 
 def bits2spins(vec):
     """ Convert a bitvector @vec to a spinvector. """
@@ -78,10 +78,10 @@ samples = 10
 partitioning = (len(classes), samples)
 sqrtsamples = int(np.sqrt(samples))
 distr = np.zeros((neurons, samples*len(classes)))
-# annealing schedule
+# annealing schedule (lower temp makes it essentially like SGD)
 asched = np.linspace(1.0, 0.9, 10)
 # Generate list of nearest-neighbors for each spin
-neighbors = tools.GenerateNeighbors(neurons, sps.dok_matrix(W), 2*neurons)
+neighbors = sa.GenerateNeighbors(neurons, sps.dok_matrix(W), 2*neurons)
 print("Generating annealing samples from the trained model.")
 # gather samples and plot them out
 fig, axarr = plt.subplots(2*len(classes), samples+1)
@@ -101,6 +101,7 @@ for iclass, dclass in enumerate(classes):
             axarr[2*iclass,isample].set_title("Training")
         # anneal
         sa.Anneal(asched, 1, state, neighbors, rng)
+        # sa.Anneal_dense(asched, 1, state, W, rng)
         # recall row
         axarr[2*iclass+1,isample].imshow(state.reshape(20,16).astype(int),
                                        cmap='Greys', interpolation='nearest')
