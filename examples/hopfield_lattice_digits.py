@@ -40,9 +40,9 @@ seed = None
 rng = np.random.RandomState(seed)
 # training data
 datamat = sio.loadmat('data/binaryalphadigs.mat')
-print datamat['classlabels']
-print datamat['classlabels'].size
-print datamat['dat'].shape
+# print datamat['classlabels']
+# print datamat['classlabels'].size
+# print datamat['dat'].shape
 # num of neurons
 neurons = 320 #datasp[:,0].size
 classes = [10]#36
@@ -57,23 +57,24 @@ datasp = np.asarray(
 # reshape to make 2D data matrix (neurons x training vecs)
 datasp = datasp.reshape(-1, datasp.shape[-1]).T
 # weight matrix (tiny random numbers)
-W = rng.rand(neurons,neurons)*1e-8
+W = hopfield.rand_2d_lattice(20, 16, rng, periodic=False)
 # number of MCMC steps
 nsteps = 10
 # learning rate
-eta = 0.001
+eta = 0.01
 # temperature
 temp = 1.0
 # training epochs
 epochs = 100
 # train the weights
+W = W.todense()
 W1 = W.copy()
-W = hopfield.train(datasp, W, nsteps, eta, temp, epochs, rng)
-print(W1 == W)
+W = hopfield.train_sparse(datasp, W, nsteps, eta, temp, epochs, rng)
+print(np.all(W1 == W))
 # Print out data
-print("Training data (in order given to model):")
-for dvec in datasp.T:
-    print(np.asarray(dvec.reshape(20,16), dtype=int))
+# print("Training data (in order given to model):")
+# for dvec in datasp.T:
+#     print(np.asarray(dvec.reshape(20,16), dtype=int))
 # Print out energies from trained model
 print("Lowest states and their energies (sampled with simulated annealing):")
 samples = 10
