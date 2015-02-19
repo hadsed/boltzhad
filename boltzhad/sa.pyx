@@ -212,7 +212,11 @@ cpdef Anneal_dense(np.float_t[:] sched,
                         ediff += -2.0*svec[sidx]*J[sidx,si]
                     # calculate the energy diff of flipping this spin
                     else:
-                        ediff += -2.0*svec[sidx]*(J[sidx,si]*svec[si])
+                        # incase we only have upper triangle
+                        if sidx < si:
+                            ediff += -2.0*svec[sidx]*(J[sidx,si]*svec[si])
+                        elif sidx > si:
+                            ediff += -2.0*svec[sidx]*(J[si,sidx]*svec[si])
                 # Metropolis accept or reject
                 if ediff > 0.0:  # avoid overflow
                     svec[sidx] *= -1
@@ -338,7 +342,11 @@ cpdef Anneal_dense_parallel(np.float_t[:] sched,
                     if si == sidx:
                         ediffs[sidx] += -2.0*svec[sidx]*J[sidx,si]
                     else:
-                        ediffs[sidx] += -2.0*svec[sidx]*(J[sidx,si]*svec[sidx])
+                        # incase we only have upper triangle
+                        if sidx < si:
+                            ediffs[sidx] += -2.0*svec[sidx]*(J[sidx,si]*svec[si])
+                        elif sidx > si:
+                            ediffs[sidx] += -2.0*svec[sidx]*(J[si,sidx]*svec[si])
                 # Accept or reject
                 if ediffs[sidx] > 0.0:  # avoid overflow
                     svec[sidx] *= -1

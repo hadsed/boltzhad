@@ -57,7 +57,8 @@ datasp = np.asarray(
 # reshape to make 2D data matrix (neurons x training vecs)
 datasp = datasp.reshape(-1, datasp.shape[-1]).T
 # weight matrix (tiny random numbers)
-W = hopfield.rand_2d_lattice(20, 16, rng, periodic=False)
+W = hopfield.rand_kblock_2d_lattice(20, 16, rng, k=321)
+print W.nnz
 # number of MCMC steps
 nsteps = 10
 # learning rate
@@ -68,9 +69,7 @@ temp = 1.0
 epochs = 100
 # train the weights
 W = W.todense()
-W1 = W.copy()
 W = hopfield.train_sparse(datasp, W, nsteps, eta, temp, epochs, rng)
-print(np.all(W1 == W))
 # Print out data
 # print("Training data (in order given to model):")
 # for dvec in datasp.T:

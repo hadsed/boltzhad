@@ -11,6 +11,7 @@ import numpy as np
 cimport numpy as np
 cimport cython
 import scipy.sparse as sps
+import itertools
 from libc.math cimport exp as cexp
 from libc.stdlib cimport rand as crand
 from libc.stdlib cimport RAND_MAX as RAND_MAX
@@ -139,8 +140,11 @@ cpdef np.ndarray[np.float_t, ndim=2] train_sparse(
                     # calculate energy difference
                     ediff = 0.0
                     for nb in xrange(neurons):
-                        if nb != idxn:
+                        # we only have upper triangle of @W
+                        if idxn < nb:
                             ediff += 2.0*state[idxn]*(W[idxn,nb]*state[nb])
+                        elif idxn > nb:
+                            ediff += 2.0*state[idxn]*(W[nb,idxn]*state[nb])
                     # decide to flip or not according to Gibbs update
                     if min(1,1./(1+cexp(ediff/T))) > crand()/float(RAND_MAX):
                         state[idxn] *= -1
@@ -177,11 +181,11 @@ def rand_2d_lattice(int nrows,
         # periodic vertical (consider first "row" in square lattice only)
         if (jrow < ncols) and periodic:
             J[jrow, jrow + ncols*(nrows-1)] = rng.uniform(low=-1e-8, high=1e-8)
+        # periodic horizontal
+        if (jrow % ncols == 0.0) and periodic:
+            J[jrow, jrow+ncols-1] = rng.uniform(low=-1e-8, high=1e-8)
         # loop through columns
         for jcol in xrange(jrow, nspins):
-            # periodic horizontal
-            if (jrow % ncols == 0.0) and periodic:
-                J[jrow, jrow+ncols-1] = rng.uniform(low=-1e-8, high=1e-8)
             # horizontal neighbors (we can build it all using right neighbors)
             if ((jcol == jrow + 1) and 
                 (jrow % ncols != ncols - 1)):  # right neighbor
@@ -189,4 +193,118 @@ def rand_2d_lattice(int nrows,
             # vertical neighbors (we can build it all using bottom neighbors)
             if (jcol == jrow + ncols):
                 J[jrow, jcol] = rng.uniform(low=-1e-8, high=1e-8)
+    return J
+
+def rand_kblock_2d_lattice(int nrows, 
+                           int ncols, 
+                           rng, 
+                           int k=1):
+    """
+    Generate an Ising model that extends the 2D lattice case to where each
+    spin has coupling to all other spins in a "block" of radius @k.
+
+    @k = 1:
+             o------o------o
+             |      |      |
+             |      |      |
+             o-----|Z|-----o
+             |      |      |
+             |      |      |
+             o------o------o
+
+    @k = 2:
+
+      o------o------o------o------o
+      |      |      |      |      |
+      |      |      |      |      |
+      o------o------o------o------o
+      |      |      |      |      |
+      |      |      |      |      |
+      o------o-----|Z|-----o------o
+      |      |      |      |      |
+      |      |      |      |      |
+      o------o------o------o------o
+      |      |      |      |      |
+      |      |      |      |      |
+      o------o------o------o------o
+
+
+    where each 'o' is directly coupled to 'Z', the central spin we're 
+    considering. This forms a kind of receptive field around each neuron.
+    Couplings are between [-1e-8,1e-8] randomly chosen from a uniform distribution.
+    
+    Returns: Ising matrix in sparse DOK format
+    """
+    cdef int nspins = nrows*ncols
+    cdef int ispin = 0
+    cdef int jspin = 0
+    cdef int ki = 0
+    cdef int tlc = 0
+    cdef int indicator = 0
+
+    # Generate periodic lattice adjacency matrix
+    J = sps.dok_matrix((nspins,nspins), dtype=np.float64)
+    # loop through spins
+    for ispin in xrange(nspins):
+        # loop over the radii (no self-connections, so no zero)
+        for ki in xrange(1,k):
+            # top left corner spin
+            tlc = ispin - (ki+1)*ncols - 1 + ki
+            # indicate whether any of these are valid neighbor spins
+            indicator = 0
+            # loop over all spins at ki-th radius
+            # upper side
+            for idx in (tlc+r for r in xrange(2*ki+1)):
+                # check upper boundary (if violated, we're done)
+                if (idx < 0):
+                    break
+                # check left and right boundary
+                elif (idx % ncols == ncols - 1) or (idx % ncols == 1):
+                    continue
+                # ensure we populate upper triangle of J
+                elif ispin < idx:
+                    indicator = 1
+                    J[ispin, idx] = rng.uniform(low=-1e-8, high=1e-8)
+            # lower side
+            for idx in (tlc+r+2*ki*ncols for r in xrange(2*ki+1)):
+                # check lower boundary (if violated, we're done)
+                if (idx >= nspins):
+                    break
+                # check left and right boundary
+                elif (idx % ncols == ncols - 1) or (idx % ncols == 1):
+                    continue
+                # ensure we populate upper triangle of J
+                elif ispin < idx:
+                    indicator = 1
+                    J[ispin, idx] = rng.uniform(low=-1e-8, high=1e-8)
+            # left side
+            for idx in (tlc+r*ncols for r in xrange(1,2*ki+1)):
+                # check left boundary (if violated, we're done)
+                if (idx % ncols == ncols - 1):
+                    break
+                # check upper and lower boundary
+                elif (idx < 0) or (idx >= nspins):
+                    continue
+                # ensure we populate upper triangle of J
+                elif ispin < idx:
+                    indicator = 1
+                    J[ispin, idx] = rng.uniform(low=-1e-8, high=1e-8)
+            # right side
+            for idx in (tlc+2*ki+r*ncols for r in xrange(1,2*ki+1)):
+                # check right boundary (if violated, we're done)
+                if (idx % ncols == 1):
+                    break
+                # check upper and lower boundary
+                elif (idx < 0) or (idx >= nspins):
+                    continue
+                # ensure we populate upper triangle of J
+                elif ispin < idx:
+                    indicator = 1
+                    J[ispin, idx] = rng.uniform(low=-1e-8, high=1e-8)
+            # if we found no valid spins at this radius, then the user
+            # has overspecified @k since it's larger than the grid
+            if not indicator:
+                # readjust @k since user clearly screwed up
+                # k = ki
+                break
     return J
