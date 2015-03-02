@@ -247,64 +247,41 @@ def rand_kblock_2d_lattice(int nrows,
     # loop through spins
     for ispin in xrange(nspins):
         # loop over the radii (no self-connections, so no zero)
-        for ki in xrange(1,k):
-            # top left corner spin
-            tlc = ispin - (ki+1)*ncols - 1 + ki
-            # indicate whether any of these are valid neighbor spins
-            indicator = 0
+        for ki in xrange(1,k+1):
+            # put bounds on what the true radius is in each direction
+            # so it doesn't go beyond the boundaries
+            kleft = ispin % ncols
+            kleft = ki if kleft >= ki else kleft
+            if ((ispin+1) % ncols) != 0:
+                kright = ncols - ((ispin+1) % ncols)
+            else:
+                kright = 0
+            kright = ki if kright >= ki else kright
+            kup = ki
+            while ispin - kup*ncols < 0:
+                kup -= 1
+            kup = ki if kup >= ki else kup
+            kdown = ki
+            while ispin + kdown*ncols >= nspins:
+                kdown -= 1
+            kdown = ki if kdown >= ki else kdown
+            # top left corner spin (make sure it's not a negative index)
+            tlc = max(ispin - (kup)*ncols - kleft, 0)
             # loop over all spins at ki-th radius
             # upper side
-            for idx in (tlc+r for r in xrange(2*ki+1)):
-                # check upper boundary (if violated, we're done)
-                if (idx < 0):
-                    break
-                # check left and right boundary
-                elif (idx % ncols == ncols - 1) or (idx % ncols == 1):
-                    continue
-                # ensure we populate upper triangle of J
-                elif ispin < idx:
-                    indicator = 1
+            for idx in (tlc+r for r in xrange(kleft+kright+1)):
+                if ispin < idx:
                     J[ispin, idx] = rng.uniform(low=-1e-8, high=1e-8)
             # lower side
-            for idx in (tlc+r+2*ki*ncols for r in xrange(2*ki+1)):
-                # check lower boundary (if violated, we're done)
-                if (idx >= nspins):
-                    break
-                # check left and right boundary
-                elif (idx % ncols == ncols - 1) or (idx % ncols == 1):
-                    continue
-                # ensure we populate upper triangle of J
-                elif ispin < idx:
-                    indicator = 1
+            for idx in (tlc+r+(kup+kdown)*ncols for r in xrange(kleft+kright+1)):
+                if ispin < idx:
                     J[ispin, idx] = rng.uniform(low=-1e-8, high=1e-8)
             # left side
-            for idx in (tlc+r*ncols for r in xrange(1,2*ki+1)):
-                # check left boundary (if violated, we're done)
-                if (idx % ncols == ncols - 1):
-                    break
-                # check upper and lower boundary
-                elif (idx < 0) or (idx >= nspins):
-                    continue
-                # ensure we populate upper triangle of J
-                elif ispin < idx:
-                    indicator = 1
+            for idx in (tlc+r*ncols for r in xrange(1,kup+kdown+1)):
+                if ispin < idx:
                     J[ispin, idx] = rng.uniform(low=-1e-8, high=1e-8)
             # right side
-            for idx in (tlc+2*ki+r*ncols for r in xrange(1,2*ki+1)):
-                # check right boundary (if violated, we're done)
-                if (idx % ncols == 1):
-                    break
-                # check upper and lower boundary
-                elif (idx < 0) or (idx >= nspins):
-                    continue
-                # ensure we populate upper triangle of J
-                elif ispin < idx:
-                    indicator = 1
+            for idx in (tlc+kleft+kright+r*ncols for r in xrange(1,kup+kdown+1)):
+                if ispin < idx:
                     J[ispin, idx] = rng.uniform(low=-1e-8, high=1e-8)
-            # if we found no valid spins at this radius, then the user
-            # has overspecified @k since it's larger than the grid
-            if not indicator:
-                # readjust @k since user clearly screwed up
-                # k = ki
-                break
     return J
