@@ -123,7 +123,8 @@ for iclass, dclass in enumerate(classes):
         axarr[2*iclass+1,isample].get_xaxis().set_visible(False)
         axarr[2*iclass+1,isample].get_yaxis().set_visible(False)
         # anneal
-        sa.Anneal(asched, 1, state, neighbors, rng)
+        # sa.Anneal(asched, 1, state, neighbors, rng)
+        boltz.sample_restricted(state, W, 1)
         # output row
         axarr[2*iclass+2,isample].imshow(state[:nvisible].reshape(20,16).astype(int),
                                        cmap='Greys', interpolation='nearest')

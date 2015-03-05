@@ -124,7 +124,7 @@ def train_restricted(np.float_t [:, :] data,
 @cython.boundscheck(True)
 @cython.wraparound(False)
 @cython.embedsignature(True)
-def sample_restricted(np.float_t [:] start, 
+def sample_restricted(np.float_t [:] state, 
                       np.ndarray[np.float_t, ndim=2] W,
                       int ksteps):
     """
@@ -136,18 +136,19 @@ def sample_restricted(np.float_t [:] start,
     cdef int k = 0
     cdef int nvisible = W.shape[0]
     cdef int nhidden = W.shape[1]
-    cdef np.ndarray[np.float_t, ndim=1] state = np.zeros(nvisible+nhidden)
+    # cdef np.ndarray[np.float_t, ndim=1] state = np.zeros(nvisible+nhidden)
 
     for k in xrange(ksteps):
         # calculate hidden unit probabilties given the visibles (training vec)
         posprobs = np.tanh(np.dot(W.T, state[:nvisible]))
         # sample for the actual state
-        state[:nvisible] = posprobs > np.random.rand(nhidden)
+        print (posprobs > np.random.rand(nhidden)).shape, len(state[:nvisible])
+        state[nvisible:] = np.asarray(posprobs > np.random.rand(nhidden), dtype=np.float)
         # resample visible units
         visreconprobs = np.tanh(np.dot(W, state[nvisible:]))
-        state[nvisible:] = visreconprobs > np.random.rand(nvisible)
+        state[:nvisible] = visreconprobs > np.random.rand(nvisible)
         # resample hidden units
         negprobs = np.tanh(np.dot(W.T, visreconprobs))
         state[nvisible:] = negprobs > np.random.rand(1, nhidden)
 
-    return state
+    # return state
