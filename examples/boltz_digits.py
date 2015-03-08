@@ -53,15 +53,16 @@ cdk = 5
 # learning rate
 eta = 0.01
 # training epochs
+# (if we're low on data, we can set this higher)
 epochs = 100
 # Random number generator
 seed = None
 rng = np.random.RandomState(seed)
 
 # number of sample inputs for testing
-samples = 10
+samples = 20
 # fix up the data we want
-classes = [10,11]
+classes = [10,11,12]
 # max training vectors is 39
 nperclass = 15
 
@@ -77,18 +78,12 @@ datasp = np.asarray(
 # reshape to make 2D data matrix (neurons x training vecs)
 datasp = datasp.reshape(-1, datasp.shape[-1]).T
 # weight matrix (tiny random numbers)
-W = rng.rand(nvisible,nhidden)*1e-3
-# train the weights (change W inplace)
-boltz.train_restricted(datasp, W, eta, epochs, cdk, rng)
-
-# annealing schedule (lower temp makes it essentially like SGD)
-asched = np.linspace(1e-4, 1e-4, 100)
-# create true J coupling matrix corresponding to W
-J = np.zeros((nvisible+nhidden,nvisible+nhidden))
-for row in xrange(nvisible):
-    for col in xrange(nhidden):
-        # offset by the right amount
-        J[row,col+nvisible] = W[row,col]
+scale = 1e-3
+W = rng.rand(nvisible,nhidden)*scale
+vbias = rng.rand(nvisible)*scale
+hbias = rng.rand(nhidden)*scale
+# train the weights (inplace)
+boltz.train_restricted(datasp, W, vbias, hbias, eta, epochs, cdk, rng)
 # plot stuff
 fig, ax = plt.subplots(1+2*len(classes),1)
 border = 0
@@ -131,12 +126,7 @@ for icls, cls in enumerate(classes):
         # input hidden units
         classmats[cls]['inp'][21:21+nhidrow,colidxh:colidxh+nhidcol] = \
                 state[nvisible:].reshape(nhidrow,nhidcol).astype(int)
-        # anneal (well, basically gradient descent given the schedule)
-        # sa.Anneal(asched, 1, sa.bits2spins(state), neighbors, rng)
-        state = sa.bits2spins(state)
-        sa.Anneal_dense(asched, 1, state, J, rng)
-        # anneal function uses bipolar spin representation
-        state = spins2bits(state)
+        state = boltz.sample_restricted(state, W, vbias, hbias, 10)
         # output visibles
         classmats[cls]['out'][:20,colidx:colidx+16] = \
                                 state[:nvisible].reshape(20,16).astype(int)

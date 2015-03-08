@@ -32,11 +32,11 @@ cdef logit(x):
 @cython.boundscheck(True)
 @cython.wraparound(False)
 @cython.embedsignature(True)
-cpdef contr_div(np.ndarray[np.float_t, ndim=1] state,
-                np.float_t [:,:] W,
-                int nvisible,
-                int nhidden,
-                int cdk):
+cdef inline contr_div(np.ndarray[np.float_t, ndim=1] state,
+                      np.float_t [:,:] W,
+                      np.float_t [:] vbias,
+                      np.float_t [:] hbias,
+                      int cdk):
     """
     Implement contrastive divergence with @cdk up-down
     steps using given weights @W and binary start state
@@ -44,32 +44,38 @@ cpdef contr_div(np.ndarray[np.float_t, ndim=1] state,
     visible unit states, and the rest give the hiddens.
     @W has shape (@nvisible, @nhidden).
     """
-
-    # todo: take care of bias unit on hidden layer
-
-
+    cdef int nvisible = vbias.size
+    cdef int nhidden = hbias.size
+    cdef int k = 0
+    cdef np.ndarray[np.float_t, ndim=2] grad = np.zeros((nvisible, nhidden))
+    cdef np.ndarray[np.float_t, ndim=1] gvbias = np.empty(nvisible)
+    cdef np.ndarray[np.float_t, ndim=1] ghbias = np.empty(nhidden)
+    cdef np.ndarray[np.float_t, ndim=1] visreconprobs = np.empty(nvisible)
     # positive phase
-
-    # calculate hidden unit probabilties given the visibles (training vec)
-    posprobs = logit(np.dot(W.T, state[:nvisible]))
-    # sample for the actual state
-    state[nvisible:] = posprobs > np.random.rand(nhidden)
+    # store initial state of visible units for bias update
+    gvbias = state[:nvisible]
+    # calculate hidden unit state given the visibles (training vec) and
+    # sample for the actual state using activation probabilities
+    state[nvisible:] = (logit(np.dot(W.T, state[:nvisible]) + hbias) > 
+                        np.random.rand(nhidden))
+    # store initial state of visible units for bias update
+    ghbias = state[nvisible:]
     # positive contribution
-    positive = np.outer(state[:nvisible], state[nvisible:])
-
+    grad = np.outer(state[:nvisible], state[nvisible:])
     # negative phase
+    # loop over up-down passes
     for k in xrange(cdk):
         # resample visible units
-        visreconprobs = logit(np.dot(W, state[nvisible:]))
+        visreconprobs = logit(np.dot(W, state[nvisible:]) + vbias)
         state[:nvisible] = visreconprobs > np.random.rand(nvisible)
         # resample hidden units
-        negprobs = logit(np.dot(W.T, visreconprobs))
-        state[nvisible:] = negprobs > np.random.rand(1, nhidden)
-
+        state[nvisible:] = (logit(np.dot(W.T, visreconprobs)) + hbias > 
+                            np.random.rand(1, nhidden))
     # negative contribution
-    negative = np.outer(state[:nvisible], state[nvisible:])
-
-    return positive - negative
+    grad -= np.outer(state[:nvisible], state[nvisible:])
+    gvbias -= state[:nvisible]
+    ghbias -= state[nvisible:]
+    return grad, gvbias, ghbias
 
 
 @cython.boundscheck(True)
@@ -77,6 +83,8 @@ cpdef contr_div(np.ndarray[np.float_t, ndim=1] state,
 @cython.embedsignature(True)
 def train_restricted(np.float_t [:, :] data, 
                      np.ndarray[np.float_t, ndim=2] W,
+                     np.ndarray[np.float_t, ndim=1] vbias,
+                     np.ndarray[np.float_t, ndim=1] hbias,
                      float eta, 
                      int epochs, 
                      int cdk,
@@ -118,19 +126,24 @@ def train_restricted(np.float_t [:, :] data,
     # training epochs
     for ep in xrange(epochs):
         # train W using MCMC for each training vector
-        for idat in xrange(data.shape[1]):
+        for idat in rng.permutation(range(data.shape[1])):
             # initialize state to the training vector
             state[:nvisible] = data[:,idat]
-            # update weights with contrastive divergence
-            W += contr_div(state, W, nvisible, nhidden, cdk)*eta
-    return W
+            # get gradient updates (weights, visible bias, hidden bias) from CD
+            gw, gv, gh = contr_div(state, W, vbias, hbias, cdk)
+            # update weights and biases
+            W += gw*eta
+            vbias += gv*eta
+            hbias += gh*eta
+    return W, vbias, hbias
 
 @cython.boundscheck(True)
 @cython.wraparound(False)
 @cython.embedsignature(True)
 def sample_restricted(np.ndarray[np.float_t, ndim=1] state,
-                      # np.float_t [:] state, 
                       np.ndarray[np.float_t, ndim=2] W,
+                      np.ndarray[np.float_t, ndim=1] vbias,
+                      np.ndarray[np.float_t, ndim=1] hbias,
                       int ksteps):
     """
     This method implements a @k-step Gibbs sampler for
@@ -138,19 +151,19 @@ def sample_restricted(np.ndarray[np.float_t, ndim=1] state,
     given some starting vector @start. @W is the coupling 
     matrix.
     """
-    cdef int k = 0
     cdef int nvisible = W.shape[0]
     cdef int nhidden = W.shape[1]
-    # cdef np.ndarray[np.float_t, ndim=1] state = np.zeros(nvisible+nhidden)
-
+    # sample hidden units given some starting state for visibles
+    state[nvisible:] = (logit(np.dot(W.T, state[:nvisible]) + hbias) > 
+                        np.random.rand(nhidden))
+    # loop over up-down passes
     for k in xrange(ksteps):
-        # calculate hidden unit probabilties given the visibles (training vec)
-        posprobs = logit(np.dot(W.T, state[:nvisible]))
-        # sample for the actual state
-        state[nvisible:] = posprobs > np.random.rand(nhidden)
-        # resample visible units
-        visreconprobs = logit(np.dot(W, state[nvisible:]))
-        state[:nvisible] = visreconprobs > np.random.rand(nvisible)
-        # resample hidden units
-        negprobs = logit(np.dot(W.T, visreconprobs))
-        state[nvisible:] = negprobs > np.random.rand(1, nhidden)
+        # sample visible units
+        # visreconprobs = logit(np.dot(W, state[nvisible:]) + vbias)
+        # state[:nvisible] = visreconprobs > np.random.rand(nvisible)
+        state[:nvisible] = (logit(np.dot(W, state[nvisible:]) + vbias) > 
+                            np.random.rand(nvisible))
+        # sample hidden units
+        state[nvisible:] = (logit(np.dot(W.T, state[:nvisible])) + hbias > 
+                            np.random.rand(1, nhidden))
+    return state
