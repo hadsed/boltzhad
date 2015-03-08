@@ -26,6 +26,12 @@ cpdef isingenergy(np.float_t [:] z,
 @cython.boundscheck(True)
 @cython.wraparound(False)
 @cython.embedsignature(True)
+cdef logit(x):
+    return 1.0/(1.0 + np.exp(-x))
+
+@cython.boundscheck(True)
+@cython.wraparound(False)
+@cython.embedsignature(True)
 cpdef contr_div(np.ndarray[np.float_t, ndim=1] state,
                 np.float_t [:,:] W,
                 int nvisible,
@@ -45,7 +51,7 @@ cpdef contr_div(np.ndarray[np.float_t, ndim=1] state,
     # positive phase
 
     # calculate hidden unit probabilties given the visibles (training vec)
-    posprobs = np.tanh(np.dot(W.T, state[:nvisible]))
+    posprobs = logit(np.dot(W.T, state[:nvisible]))
     # sample for the actual state
     state[nvisible:] = posprobs > np.random.rand(nhidden)
     # positive contribution
@@ -54,10 +60,10 @@ cpdef contr_div(np.ndarray[np.float_t, ndim=1] state,
     # negative phase
     for k in xrange(cdk):
         # resample visible units
-        visreconprobs = np.tanh(np.dot(W, state[nvisible:]))
+        visreconprobs = logit(np.dot(W, state[nvisible:]))
         state[:nvisible] = visreconprobs > np.random.rand(nvisible)
         # resample hidden units
-        negprobs = np.tanh(np.dot(W.T, visreconprobs))
+        negprobs = logit(np.dot(W.T, visreconprobs))
         state[nvisible:] = negprobs > np.random.rand(1, nhidden)
 
     # negative contribution
@@ -115,8 +121,6 @@ def train_restricted(np.float_t [:, :] data,
         for idat in xrange(data.shape[1]):
             # initialize state to the training vector
             state[:nvisible] = data[:,idat]
-            # print contr_div(state, W, nvisible, nhidden, cdk)
-            # print contr_div(state, W, nvisible, nhidden, cdk)*eta
             # update weights with contrastive divergence
             W += contr_div(state, W, nvisible, nhidden, cdk)*eta
     return W
@@ -124,7 +128,8 @@ def train_restricted(np.float_t [:, :] data,
 @cython.boundscheck(True)
 @cython.wraparound(False)
 @cython.embedsignature(True)
-def sample_restricted(np.float_t [:] state, 
+def sample_restricted(np.ndarray[np.float_t, ndim=1] state,
+                      # np.float_t [:] state, 
                       np.ndarray[np.float_t, ndim=2] W,
                       int ksteps):
     """
@@ -140,15 +145,12 @@ def sample_restricted(np.float_t [:] state,
 
     for k in xrange(ksteps):
         # calculate hidden unit probabilties given the visibles (training vec)
-        posprobs = np.tanh(np.dot(W.T, state[:nvisible]))
+        posprobs = logit(np.dot(W.T, state[:nvisible]))
         # sample for the actual state
-        print (posprobs > np.random.rand(nhidden)).shape, len(state[:nvisible])
-        state[nvisible:] = np.asarray(posprobs > np.random.rand(nhidden), dtype=np.float)
+        state[nvisible:] = posprobs > np.random.rand(nhidden)
         # resample visible units
-        visreconprobs = np.tanh(np.dot(W, state[nvisible:]))
+        visreconprobs = logit(np.dot(W, state[nvisible:]))
         state[:nvisible] = visreconprobs > np.random.rand(nvisible)
         # resample hidden units
-        negprobs = np.tanh(np.dot(W.T, visreconprobs))
+        negprobs = logit(np.dot(W.T, visreconprobs))
         state[nvisible:] = negprobs > np.random.rand(1, nhidden)
-
-    # return state

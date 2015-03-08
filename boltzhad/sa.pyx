@@ -21,6 +21,16 @@ from libc.stdlib cimport RAND_MAX as RAND_MAX
 # from libc.stdio cimport printf as cprintf
 
 
+def bits2spins(vec):
+    """ Convert a bitvector @vec to a spinvector. """
+    return np.asarray([ -1 if k == 1 else 1 for k in vec ],
+                      dtype=np.float)
+
+def spins2bits(vec):
+    """ Convert a spinvector @vec to a bitvector. """
+    return np.asarray([ 0 if k == 1 else 1 for k in vec ], 
+                      dtype=np.float)
+
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.embedsignature(True)

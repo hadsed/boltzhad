@@ -11,6 +11,7 @@ Description: Try to train a Hopfield net on the
 import numpy as np
 import scipy.sparse as sps
 import scipy.io as sio
+import matplotlib
 import matplotlib.pyplot as plt
 
 import boltzhad.hopfield as hopfield
@@ -36,16 +37,21 @@ def spins2bitstr(vec):
     a = spins2bits(a)
     return reduce(lambda x,y: x+y, [ str(k) for k in bvec ])
 
+def logit(x):
+    return 1.0/(1.0 + np.exp(-x))
+
 # number of visible units (must be equal to data length)
 nvisible = 320
 # number of hidden units
-nhidden = 100
-# number of MCMC steps
-nsteps = 10
+nhidden = 50
+# for plotting
+nhidrow = 6  # essentially unbounded
+nhidcol = 16  # should be less than 16
+nhidden = nhidrow*nhidcol
+# number of MCMC steps in CD
+cdk = 5
 # learning rate
-eta = 0.1
-# temperature
-temp = 1.0
+eta = 0.01
 # training epochs
 epochs = 100
 # Random number generator
@@ -55,8 +61,9 @@ rng = np.random.RandomState(seed)
 # number of sample inputs for testing
 samples = 10
 # fix up the data we want
-classes = [10]
-nperclass = 10
+classes = [10,11]
+# max training vectors is 39
+nperclass = 15
 
 # training data
 datamat = sio.loadmat('data/binaryalphadigs.mat')
@@ -70,73 +77,96 @@ datasp = np.asarray(
 # reshape to make 2D data matrix (neurons x training vecs)
 datasp = datasp.reshape(-1, datasp.shape[-1]).T
 # weight matrix (tiny random numbers)
-W = rng.rand(nvisible,nhidden)*1e-1
-W1 = W.copy()
+W = rng.rand(nvisible,nhidden)*1e-3
 # train the weights (change W inplace)
-boltz.train_restricted(datasp, W, eta, epochs, 3, rng)
-# print ''
-# print("W has been trained.", (W1 - W))
-# print ''
-# os.lol
+boltz.train_restricted(datasp, W, eta, epochs, cdk, rng)
 
-# Print out data
-print("Training data (in order given to model):")
-for dvec in datasp.T:
-    print(np.asarray(dvec.reshape(20,16), dtype=int))
-# Print out energies from trained model
-print("Lowest states and their energies (sampled with simulated annealing):")
 # annealing schedule (lower temp makes it essentially like SGD)
-asched = np.linspace(2.0, 0.001, 100)
+asched = np.linspace(1e-4, 1e-4, 100)
 # create true J coupling matrix corresponding to W
-J = sps.dok_matrix((nvisible+nhidden,nvisible+nhidden))
+J = np.zeros((nvisible+nhidden,nvisible+nhidden))
 for row in xrange(nvisible):
     for col in xrange(nhidden):
         # offset by the right amount
         J[row,col+nvisible] = W[row,col]
-# Generate list of nearest-neighbors for each spin
-neighbors = sa.GenerateNeighbors(nvisible+nhidden, J, nvisible+1)
-print("Generating annealing samples from the trained model.")
-# gather samples and plot them out
-fig, axarr = plt.subplots(4*len(classes), samples+1)
-for iclass, dclass in enumerate(classes):
-    for isample in xrange(samples+1):
+# plot stuff
+fig, ax = plt.subplots(1+2*len(classes),1)
+border = 0
+# create a matrix to hold all the stuff we want to plot
+trainmat = -1.0*np.ones((20*len(classes), nperclass*16))
+inpmat = -1.0*np.ones((20+nhidrow+1, samples*(16+border)))
+outmat = -1.0*np.ones((20+nhidrow+1, samples*(16+border)))
+classmats = {}
+# first row is the training images
+for itvec, tvec in enumerate(datasp.T):
+    # how many training per class
+    cpart = datasp.shape[1]/len(classes)
+    # class id
+    cidx = (itvec - (itvec % cpart)) / cpart
+    # column index
+    colidx = (itvec % cpart)*16
+    # fill array
+    trainmat[20*cidx:20*(cidx+1),colidx:colidx+16] = tvec.reshape(20,16).astype(int)
+# loop through the classes
+for icls, cls in enumerate(classes):
+    classmats[cls] = { 'inp': inpmat.copy(), 
+                       'out': outmat.copy() }
+    # gather samples and add them to plotting matrix
+    for isample in xrange(samples):
         # choose input vector (not from training data)
-        trainidx = nperclass+isample-1
+        inpidx = nperclass+isample-1
         # initialize a random state
         state = np.asarray(np.random.binomial(1, 0.5, nvisible+nhidden),
                            dtype=np.float)
         # set visible units to a test image
-        state[:nvisible] = np.asarray(
-            bits2spins(datamat['dat'][dclass][trainidx].flatten()),
-            dtype=np.float)
-        # input row - visible units
-        if isample == 0:
-            axarr[2*iclass,isample].set_title("Inputs")
-        axarr[2*iclass,isample].imshow(state[:nvisible].reshape(20,16).astype(int),
-                                     cmap='Greys', interpolation='nearest')
-        axarr[2*iclass,isample].get_xaxis().set_visible(False)
-        axarr[2*iclass,isample].get_yaxis().set_visible(False)
-        # input row - hidden units
-        axarr[2*iclass+1,isample].imshow(state[nvisible:].reshape(
-            np.sqrt(nhidden),np.sqrt(nhidden)).astype(int),
-                                       cmap='Greys', interpolation='nearest')
-        axarr[2*iclass+1,isample].get_xaxis().set_visible(False)
-        axarr[2*iclass+1,isample].get_yaxis().set_visible(False)
-        # anneal
-        # sa.Anneal(asched, 1, state, neighbors, rng)
-        boltz.sample_restricted(state, W, 1)
-        # output row
-        axarr[2*iclass+2,isample].imshow(state[:nvisible].reshape(20,16).astype(int),
-                                       cmap='Greys', interpolation='nearest')
-        axarr[2*iclass+2,isample].get_xaxis().set_visible(False)
-        axarr[2*iclass+2,isample].get_yaxis().set_visible(False)
-        # output row - hidden units
-        axarr[2*iclass+3,isample].imshow(state[nvisible:].reshape(
-            np.sqrt(nhidden),np.sqrt(nhidden)).astype(int),
-                                       cmap='Greys', interpolation='nearest')
-        axarr[2*iclass+3,isample].get_xaxis().set_visible(False)
-        axarr[2*iclass+3,isample].get_yaxis().set_visible(False)
-fig.subplots_adjust(left=0.01, bottom=0.0, right=0.99, 
-                    top=0.90, wspace=0.001, hspace=0.001)
-plt.tight_layout()
+        state[:nvisible] = datamat['dat'][cls][inpidx].flatten()
+        # calculate hidden unit probabilties given the visibles
+        state[nvisible:] = (logit(np.dot(W.T, state[:nvisible])) > 
+                            np.random.rand(nhidden))
+        # input visible units
+        colidx = isample*16
+        colidxh = colidx
+        classmats[cls]['inp'][:20,colidx:colidx+16] = \
+                                state[:nvisible].reshape(20,16).astype(int)
+        # input hidden units
+        classmats[cls]['inp'][21:21+nhidrow,colidxh:colidxh+nhidcol] = \
+                state[nvisible:].reshape(nhidrow,nhidcol).astype(int)
+        # anneal (well, basically gradient descent given the schedule)
+        # sa.Anneal(asched, 1, sa.bits2spins(state), neighbors, rng)
+        state = sa.bits2spins(state)
+        sa.Anneal_dense(asched, 1, state, J, rng)
+        # anneal function uses bipolar spin representation
+        state = spins2bits(state)
+        # output visibles
+        classmats[cls]['out'][:20,colidx:colidx+16] = \
+                                state[:nvisible].reshape(20,16).astype(int)
+        # output hiddens
+        classmats[cls]['out'][21:21+nhidrow,colidxh:colidxh+nhidcol] = \
+                state[nvisible:].reshape(nhidrow,nhidcol).astype(int)
+# switch zeros and negative ones
+trainmat[trainmat == 0] = -2
+trainmat[trainmat == -1] = 0
+trainmat[trainmat == -2] = -1
+for k in classmats.iterkeys():
+    classmats[k]['inp'][classmats[k]['inp'] == 0] = -2
+    classmats[k]['inp'][classmats[k]['inp'] == -1] = 0
+    classmats[k]['inp'][classmats[k]['inp'] == -2] = -1
+    classmats[k]['out'][classmats[k]['out'] == 0] = -2
+    classmats[k]['out'][classmats[k]['out'] == -1] = 0
+    classmats[k]['out'][classmats[k]['out'] == -2] = -1
+# plot them
+ax[0].set_title("Training data")
+ax[0].matshow(trainmat, cmap=matplotlib.cm.binary)
+# input rows
+iax = 1
+for val in classmats.itervalues():
+    ax[iax].set_title("Inputs (visible then hidden units)")
+    ax[iax].matshow(val['inp'], cmap=matplotlib.cm.binary)
+    ax[iax+1].set_title("Result (after SGD)")
+    ax[iax+1].matshow(val['out'], cmap=matplotlib.cm.binary)
+    iax += 2
+# remove axes
+for kax in ax:
+    kax.get_xaxis().set_visible(False)
+    kax.get_yaxis().set_visible(False)
 plt.show()
