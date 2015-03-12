@@ -43,9 +43,9 @@ def logit(x):
 # number of visible units (must be equal to data length)
 nvisible = 320
 # number of hidden units
-nhidden = 50
+# nhidden = 50
 # for plotting
-nhidrow = 6  # essentially unbounded
+nhidrow = 3  # essentially unbounded
 nhidcol = 16  # should be less than 16
 nhidden = nhidrow*nhidcol
 # number of MCMC steps in CD
@@ -65,6 +65,8 @@ samples = 20
 classes = [10,11,12]
 # max training vectors is 39
 nperclass = 15
+# up-down iterations for sampling trained network
+kupdown = 100
 
 # training data
 datamat = sio.loadmat('data/binaryalphadigs.mat')
@@ -126,7 +128,8 @@ for icls, cls in enumerate(classes):
         # input hidden units
         classmats[cls]['inp'][21:21+nhidrow,colidxh:colidxh+nhidcol] = \
                 state[nvisible:].reshape(nhidrow,nhidcol).astype(int)
-        state = boltz.sample_restricted(state, W, vbias, hbias, 10)
+        # do some up-down samples
+        state = boltz.sample_restricted(state, W, vbias, hbias, kupdown)
         # output visibles
         classmats[cls]['out'][:20,colidx:colidx+16] = \
                                 state[:nvisible].reshape(20,16).astype(int)
@@ -152,7 +155,7 @@ iax = 1
 for val in classmats.itervalues():
     ax[iax].set_title("Inputs (visible then hidden units)")
     ax[iax].matshow(val['inp'], cmap=matplotlib.cm.binary)
-    ax[iax+1].set_title("Result (after SGD)")
+    ax[iax+1].set_title("Result (after "+str(kupdown)+" up-down samples)")
     ax[iax+1].matshow(val['out'], cmap=matplotlib.cm.binary)
     iax += 2
 # remove axes
