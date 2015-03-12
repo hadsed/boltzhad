@@ -45,11 +45,13 @@ nvisible = 320
 # number of hidden units
 # nhidden = 50
 # for plotting
-nhidrow = 3  # essentially unbounded
+nhidrow = 5  # essentially unbounded
 nhidcol = 16  # should be less than 16
 nhidden = nhidrow*nhidcol
 # number of MCMC steps in CD
-cdk = 5
+cdk = 20
+# size of the minibatch for each gradient update
+batchsize = 10
 # learning rate
 eta = 0.01
 # training epochs
@@ -60,11 +62,11 @@ seed = None
 rng = np.random.RandomState(seed)
 
 # number of sample inputs for testing
-samples = 20
+samples = 10
 # fix up the data we want
-classes = [10,11,12]
+classes = [10]#,11,12]
 # max training vectors is 39
-nperclass = 15
+nperclass = 29
 # up-down iterations for sampling trained network
 kupdown = 100
 
@@ -82,10 +84,13 @@ datasp = datasp.reshape(-1, datasp.shape[-1]).T
 # weight matrix (tiny random numbers)
 scale = 1e-3
 W = rng.rand(nvisible,nhidden)*scale
-vbias = rng.rand(nvisible)*scale
-hbias = rng.rand(nhidden)*scale
+vbias = rng.rand(nvisible, 1)*scale
+hbias = rng.rand(nhidden, 1)*scale
 # train the weights (inplace)
-boltz.train_restricted(datasp, W, vbias, hbias, eta, epochs, cdk, rng)
+print("Training...")
+boltz.train_restricted(datasp, W, vbias, hbias, eta, epochs, 
+                       cdk, batchsize, rng)
+print("Training complete.")
 # plot stuff
 fig, ax = plt.subplots(1+2*len(classes),1)
 border = 0
@@ -129,7 +134,9 @@ for icls, cls in enumerate(classes):
         classmats[cls]['inp'][21:21+nhidrow,colidxh:colidxh+nhidcol] = \
                 state[nvisible:].reshape(nhidrow,nhidcol).astype(int)
         # do some up-down samples
-        state = boltz.sample_restricted(state, W, vbias, hbias, kupdown)
+        print("Sampling for input #"+str(isample))
+        state = boltz.sample_restricted(state, W, vbias.ravel(), hbias.ravel(), kupdown)
+        print("Sampling #"+str(isample)+" done.")
         # output visibles
         classmats[cls]['out'][:20,colidx:colidx+16] = \
                                 state[:nvisible].reshape(20,16).astype(int)
