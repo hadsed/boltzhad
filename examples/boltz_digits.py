@@ -48,24 +48,25 @@ nhidrow = 5  # essentially unbounded
 nhidcol = 16  # should be less than 16
 nhidden = nhidrow*nhidcol
 # number of MCMC steps in CD
-cdk = 15
+cdk = 3
 # size of the minibatch for each gradient update
 batchsize = 1
 # learning rate
-eta = 0.1
+eta = 0.007
 # training epochs
 # (if we're low on data, we can set this higher)
-epochs = 100
+epochs = 1000
 # weight decay term
-wdecay = 0.001
+wdecay = 0.002
 # Random number generator
 seed = None
 rng = np.random.RandomState(seed)
 
 # number of sample inputs for testing
 samples = 10
-# fix up the data we want
-classes = [10,11]
+# fix up the data we want (up to 36)
+classes = [10,11,12]
+# classes = range(36)
 # max training vectors is 39
 nperclass = 29
 # up-down iterations for sampling trained network
@@ -83,7 +84,7 @@ datasp = np.asarray(
 # reshape to make 2D data matrix (neurons x training vecs)
 datasp = datasp.reshape(-1, datasp.shape[-1]).T
 # weight matrix (tiny random numbers)
-scale = 1e-3
+scale = 1e-5
 W = rng.rand(nvisible,nhidden)*scale
 vbias = rng.rand(nvisible, 1)*scale
 hbias = rng.rand(nhidden, 1)*scale
@@ -93,7 +94,7 @@ boltz.train_restricted(datasp, W, vbias, hbias, eta, wdecay,
                        epochs, cdk, batchsize, rng)
 print("Training complete.")
 # plot stuff
-fig, ax = plt.subplots(1+2*len(classes),1)
+fig, ax = plt.subplots(1+2*len(classes),1, figsize=(6,10))
 border = 0
 # create a matrix to hold all the stuff we want to plot
 trainmat = -1.0*np.ones((20*len(classes), nperclass*16))

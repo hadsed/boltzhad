@@ -23,16 +23,23 @@ cpdef isingenergy(np.float_t [:] z,
     """ Return the energy of the Hopfield network. """
     return -0.5*np.inner(z, np.inner(J, z))
 
-@cython.boundscheck(True)
+@cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.embedsignature(True)
-cdef inline np.ndarray[np.float_t, ndim=2] logit(np.ndarray[np.float_t, ndim=2] x):
+cdef inline np.ndarray[np.float_t, ndim=2] logitopt(np.ndarray[np.float_t, ndim=2] x):
     """ Return output of the logistic function. """
     cdef np.ndarray[np.float_t, ndim=2] y = x.copy()
     y[np.abs(y) < 30] = 1.0/(1.0 + np.exp(-y[np.abs(y) < 30]))
     y[y < -30] = 0
     y[y > 30] = 1
     return y
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.embedsignature(True)
+cdef inline np.ndarray[np.float_t, ndim=2] logit(np.ndarray[np.float_t, ndim=2] x):
+    """ Return output of the logistic function. """
+    return 1.0/(1.0 + np.exp(-x))
 
 @cython.boundscheck(True)
 @cython.wraparound(False)
@@ -86,9 +93,13 @@ cdef inline contr_div(np.ndarray[np.float_t, ndim=2] state,
 @cython.wraparound(False)
 @cython.embedsignature(True)
 cdef inline contr_div_batch(np.ndarray[np.float_t, ndim=2] state,
+                            np.ndarray[np.float_t, ndim=2] pchain,
                             np.float_t [:,:] W,
                             np.float_t [:,:] vbias,
                             np.float_t [:,:] hbias,
+                            np.ndarray[np.float_t, ndim=2] grad,
+                            np.ndarray[np.float_t, ndim=2] gvbias,
+                            np.ndarray[np.float_t, ndim=2] ghbias,
                             int cdk):
     """
     Implement contrastive divergence with @cdk up-down
@@ -102,45 +113,40 @@ cdef inline contr_div_batch(np.ndarray[np.float_t, ndim=2] state,
     This is the batch version, where @state has rows of
     length equal to the total units in the RBM, columns
     equal to the batchsize.
-
     """
     cdef int nvisible = vbias.shape[0]
     cdef int nhidden = hbias.shape[0]
     cdef int k = 0
     cdef int batchsize = state.shape[1]
-    cdef np.ndarray[np.float_t, ndim=2] grad = np.zeros((nvisible, nhidden))
-    cdef np.ndarray[np.float_t, ndim=2] gvbias = np.empty((nvisible, 1))
-    cdef np.ndarray[np.float_t, ndim=2] ghbias = np.empty((nhidden, 1))
     cdef np.ndarray[np.float_t, ndim=2] vreconprobs = np.empty((nvisible, batchsize))
     cdef np.ndarray[np.float_t, ndim=2] hreconprobs = np.empty((nhidden, batchsize))
     # positive phase
     # store initial state of visible units for bias update
-    gvbias = state[:nvisible].mean(axis=1).reshape(nvisible,1)
+    gvbias[:] = state[:nvisible].mean(axis=1).reshape(nvisible,1)
     # calculate hidden unit state given the visibles (training vec) and
     # sample for the actual state using activation probabilities
     state[nvisible:] = (logit(np.dot(W.T, state[:nvisible]) + hbias) > 
                         np.random.rand(nhidden,batchsize))
     # store initial state of visible units for bias update
-    ghbias = state[nvisible:].mean(axis=1).reshape(nhidden,1)
+    ghbias[:] = state[nvisible:].mean(axis=1).reshape(nhidden,1)
     # positive contribution
-    grad = np.dot(state[:nvisible], state[nvisible:].T)/float(batchsize)
+    grad[:] = np.dot(state[:nvisible], state[nvisible:].T)/float(batchsize)
     # negative phase
-    # loop over up-down passes
+    # loop over up-down passes (using the persistent negative Gibbs chain)
     for k in xrange(cdk):
         # resample visible units (must use hidden states, not probabilities)
-        vreconprobs = logit(np.dot(W, state[nvisible:]) + vbias)
-        state[:nvisible] = vreconprobs > np.random.rand(nvisible,batchsize)
+        vreconprobs = logit(np.dot(W, pchain[nvisible:]) + vbias)
+        pchain[:nvisible] = vreconprobs > np.random.rand(nvisible,batchsize)
         # resample hidden units (we can use probabilities instead of state
         # to reduce sampling noise)
         # hreconprobs = logit(np.dot(W.T, vreconprobs) + hbias)
-        hreconprobs = logit(np.dot(W.T, state[:nvisible]) + hbias)
-        state[nvisible:] = hreconprobs > np.random.rand(nhidden,batchsize)
+        hreconprobs = logit(np.dot(W.T, pchain[:nvisible]) + hbias)
+        pchain[nvisible:] = hreconprobs > np.random.rand(nhidden,batchsize)
     # negative contribution
-    # grad -= np.dot(state[:nvisible], state[nvisible:].T)/float(batchsize)
-    grad -= np.dot(state[:nvisible], hreconprobs.T)/float(batchsize)
-    gvbias -= state[:nvisible].mean(axis=1).reshape(nvisible,1)
-    ghbias -= state[nvisible:].mean(axis=1).reshape(nhidden,1)
-    return grad, gvbias, ghbias
+    # grad[:] -= np.dot(pchain[:nvisible], pchain[nvisible:].T)/float(batchsize)
+    grad -= np.dot(pchain[:nvisible], hreconprobs.T)/float(batchsize)
+    gvbias[:] -= state[:nvisible].mean(axis=1).reshape(nvisible,1)
+    ghbias[:] -= state[nvisible:].mean(axis=1).reshape(nhidden,1)
 
 @cython.boundscheck(True)
 @cython.wraparound(False)
@@ -171,8 +177,8 @@ def train_restricted(np.float_t [:, :] data,
     where k is some random training vector index. So, the 
     first set of indices denote visibles, and the rest are
     hidden units. @W should have rank @nvisible+@nhidden.
-    @cdk is the number of contrastive divergence steps to
-    take.
+    @cdk is the number of (persistent) contrastive divergence
+    steps to take.
 
     @data should be in a 2D matrix where columns represent 
     training vectors and rows represent component variables.
@@ -186,7 +192,10 @@ def train_restricted(np.float_t [:, :] data,
     cdef int ep = 0
     cdef int idat = 0
     cdef int dstep = 0
-    cdef np.ndarray[np.float_t, ndim=2] state = np.zeros((nvisible+nhidden, batchsize))
+    cdef np.ndarray[np.float_t, ndim=2] state = np.empty((nvisible+nhidden, batchsize))
+    cdef np.ndarray[np.float_t, ndim=2] pchain = rng.binomial(1,0.5,
+                                                              (nvisible+nhidden, 
+                                                               batchsize)).astype(np.float)
     cdef np.ndarray[np.float_t, ndim=2] gw = np.empty((nvisible, nhidden))
     cdef np.ndarray[np.float_t, ndim=2] gv = np.empty((nvisible, 1))
     cdef np.ndarray[np.float_t, ndim=2] gh = np.empty((nhidden, 1))
@@ -202,8 +211,8 @@ def train_restricted(np.float_t [:, :] data,
             # initialize state to the training vector
             dstep = min(idat+batchsize, data.shape[1])
             state[:nvisible] = data[:,idat:dstep]
-            # get gradient updates (weights, visible bias, hidden bias) from CD
-            gw, gv, gh = contr_div_batch(state, W, vbias, hbias, cdk)
+            # calculate gradient updates (weights, visible bias, hidden bias) from CD
+            contr_div_batch(state, pchain, W, vbias, hbias, gw, gv, gh, cdk)
             # update weights and biases
             W += (gw + W*wdecay)*eta
             vbias += gv*eta
