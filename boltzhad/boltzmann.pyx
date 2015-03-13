@@ -27,6 +27,9 @@ cpdef isingenergy(np.float_t [:] z,
 @cython.wraparound(False)
 @cython.embedsignature(True)
 cdef inline logit(x):
+    """ Return output of the logistic function. """
+    x[x < -30] = 0
+    x[x > 30] = 1
     return 1.0/(1.0 + np.exp(-x))
 
 @cython.boundscheck(True)
@@ -176,7 +179,11 @@ def train_restricted(np.float_t [:, :] data,
     cdef int nhidden = W.shape[1]
     cdef int ep = 0
     cdef int idat = 0
+    cdef int dstep = 0
     cdef np.ndarray[np.float_t, ndim=2] state = np.zeros((nvisible+nhidden, batchsize))
+    cdef np.ndarray[np.float_t, ndim=2] gw = np.empty((nvisible, nhidden))
+    cdef np.ndarray[np.float_t, ndim=2] gv = np.empty((nvisible, 1))
+    cdef np.ndarray[np.float_t, ndim=2] gh = np.empty((nhidden, 1))
     # check that the data vectors are the right length
     if W.shape[0] != data.shape[0]:
         print("Warning: data and weight matrix shapes don't match.")
@@ -184,9 +191,11 @@ def train_restricted(np.float_t [:, :] data,
         # training epochs
         for ep in xrange(epochs):
             # train W using MCMC for each training vector
-            for idat in rng.permutation(range(0,data.shape[1]-batchsize,batchsize)):
+            # for idat in rng.permutation(range(0,data.shape[1]-batchsize,batchsize)):
+            for idat in xrange(data.shape[1]/batchsize):
                 # initialize state to the training vector
-                state[:nvisible] = data[:,idat:idat+batchsize]
+                dstep = min(idat+batchsize, data.shape[1])
+                state[:nvisible] = data[:,idat:dstep]
                 # get gradient updates (weights, visible bias, hidden bias) from CD
                 gw, gv, gh = contr_div_batch(state, W, vbias, hbias, cdk)
                 # update weights and biases

@@ -2,22 +2,26 @@ from setuptools import setup, find_packages
 # from distutils.core import setup
 from distutils.extension import Extension
 from Cython.Distutils import build_ext
+import numpy
 
 extensions = [
     Extension(
         "boltzhad.hopfield", ["boltzhad/hopfield.pyx"],
         # extra_compile_args=['-fopenmp'],
-        # extra_link_args=['-fopenmp']
+        # extra_link_args=['-fopenmp'],
+        include_dirs=[numpy.get_include()]
         ),
     Extension(
         "boltzhad.boltzmann", ["boltzhad/boltzmann.pyx"],
         # extra_compile_args=['-fopenmp'],
         # extra_link_args=['-fopenmp']
+        include_dirs=[numpy.get_include()]
         ),
     Extension(
         "boltzhad.sa", ["boltzhad/sa.pyx"],
         extra_compile_args=['-fopenmp'],
-        extra_link_args=['-fopenmp']
+        extra_link_args=['-fopenmp'],
+        include_dirs=[numpy.get_include()]
         )
     ]
 

@@ -9,7 +9,6 @@ Description: Train a restricted Boltzmann machine
 '''
 
 import numpy as np
-import scipy.sparse as sps
 import scipy.io as sio
 import matplotlib
 import matplotlib.pyplot as plt
@@ -45,15 +44,15 @@ nvisible = 784
 # number of hidden units
 # nhidden = 50
 # for plotting
-nhidrow = 3  # essentially unbounded
+nhidrow = 18  # essentially unbounded
 nhidcol = 28  # should be less than 16
 nhidden = nhidrow*nhidcol
 # number of MCMC steps in CD
-cdk = 1
+cdk = 15
 # number of training examples in batch update
 batchsize = 10
 # learning rate
-eta = 0.001
+eta = 0.1
 # training epochs
 # (if we're low on data, we can set this higher)
 epochs = 10
@@ -64,11 +63,11 @@ rng = np.random.RandomState(seed)
 # number of sample inputs for testing
 samples = 20
 # fix up the data we want
-classes = [3]
+classes = [1]
 # max training vectors is 6742
-nperclass = 10
+nperclass = 60
 # up-down iterations for sampling trained network
-kupdown = 10
+kupdown = 1
 
 # training data
 datamat = sio.loadmat('data/mnist_all.mat')
@@ -76,10 +75,11 @@ datamat = sio.loadmat('data/mnist_all.mat')
 datasp = np.vstack([ datamat['train'+str(d)][:nperclass]
                      for d in classes ]).astype(np.float).T
 # weight matrix (tiny random numbers)
-scale = 1e-12
-W = rng.rand(nvisible,nhidden)*scale
-vbias = rng.rand(nvisible)*scale
-hbias = rng.rand(nhidden)*scale
+low = -4 * np.sqrt(6. / (nhidden + nvisible))
+high = 4 * np.sqrt(6. / (nhidden + nvisible))
+W = rng.uniform(size=(nvisible,nhidden), low=low, high=high)
+vbias = rng.uniform(size=(nvisible,1), low=low, high=high)
+hbias = rng.uniform(size=(nhidden,1), low=low, high=high)
 # train the weights (inplace)
 boltz.train_restricted(datasp, W, vbias, hbias, eta, 
                        epochs, cdk, batchsize, rng)
@@ -126,7 +126,7 @@ for icls, cls in enumerate(classes):
         classmats[cls]['inp'][29:29+nhidrow,colidxh:colidxh+nhidcol] = \
                 state[nvisible:].reshape(nhidrow,nhidcol).astype(int)
         # do some up-down samples
-        state = boltz.sample_restricted(state, W, vbias, hbias, kupdown)
+        state = boltz.sample_restricted(state, W, vbias.ravel(), hbias.ravel(), kupdown)
         # output visibles
         classmats[cls]['out'][:28,colidx:colidx+28] = \
                                 state[:nvisible].reshape(28,28).astype(int)

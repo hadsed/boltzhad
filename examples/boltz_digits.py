@@ -9,7 +9,6 @@ Description: Try to train a Hopfield net on the
 '''
 
 import numpy as np
-import scipy.sparse as sps
 import scipy.io as sio
 import matplotlib
 import matplotlib.pyplot as plt
@@ -49,11 +48,11 @@ nhidrow = 5  # essentially unbounded
 nhidcol = 16  # should be less than 16
 nhidden = nhidrow*nhidcol
 # number of MCMC steps in CD
-cdk = 20
+cdk = 10
 # size of the minibatch for each gradient update
 batchsize = 10
 # learning rate
-eta = 0.01
+eta = 0.1
 # training epochs
 # (if we're low on data, we can set this higher)
 epochs = 100
