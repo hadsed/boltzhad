@@ -48,14 +48,16 @@ nhidrow = 5  # essentially unbounded
 nhidcol = 16  # should be less than 16
 nhidden = nhidrow*nhidcol
 # number of MCMC steps in CD
-cdk = 10
+cdk = 15
 # size of the minibatch for each gradient update
-batchsize = 10
+batchsize = 1
 # learning rate
 eta = 0.1
 # training epochs
 # (if we're low on data, we can set this higher)
 epochs = 100
+# weight decay term
+wdecay = 0.001
 # Random number generator
 seed = None
 rng = np.random.RandomState(seed)
@@ -63,7 +65,7 @@ rng = np.random.RandomState(seed)
 # number of sample inputs for testing
 samples = 10
 # fix up the data we want
-classes = [10]#,11,12]
+classes = [10,11]
 # max training vectors is 39
 nperclass = 29
 # up-down iterations for sampling trained network
@@ -87,8 +89,8 @@ vbias = rng.rand(nvisible, 1)*scale
 hbias = rng.rand(nhidden, 1)*scale
 # train the weights (inplace)
 print("Training...")
-boltz.train_restricted(datasp, W, vbias, hbias, eta, epochs, 
-                       cdk, batchsize, rng)
+boltz.train_restricted(datasp, W, vbias, hbias, eta, wdecay, 
+                       epochs, cdk, batchsize, rng)
 print("Training complete.")
 # plot stuff
 fig, ax = plt.subplots(1+2*len(classes),1)
@@ -134,7 +136,8 @@ for icls, cls in enumerate(classes):
                 state[nvisible:].reshape(nhidrow,nhidcol).astype(int)
         # do some up-down samples
         print("Sampling for input #"+str(isample))
-        state = boltz.sample_restricted(state, W, vbias.ravel(), hbias.ravel(), kupdown)
+        state = boltz.sample_restricted(state.reshape(state.size,1), 
+                                        W, vbias, hbias, kupdown)
         print("Sampling #"+str(isample)+" done.")
         # output visibles
         classmats[cls]['out'][:20,colidx:colidx+16] = \

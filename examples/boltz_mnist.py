@@ -37,25 +37,30 @@ def spins2bitstr(vec):
     return reduce(lambda x,y: x+y, [ str(k) for k in bvec ])
 
 def logit(x):
-    return 1.0/(1.0 + np.exp(-x))
+    x[np.where(np.abs(x) < 30)[0]] = 1.0/(1.0 + np.exp(-x[np.abs(x) < 30]))
+    x[x > 30] = 1
+    x[x < -30] = 0
+    return x
 
 # number of visible units (must be equal to data length)
 nvisible = 784
 # number of hidden units
 # nhidden = 50
 # for plotting
-nhidrow = 18  # essentially unbounded
+nhidrow = 10  # essentially unbounded
 nhidcol = 28  # should be less than 16
 nhidden = nhidrow*nhidcol
 # number of MCMC steps in CD
 cdk = 15
 # number of training examples in batch update
-batchsize = 10
+batchsize = 1
 # learning rate
 eta = 0.1
 # training epochs
 # (if we're low on data, we can set this higher)
 epochs = 10
+# rate of weight decay
+wdecay = 0.001
 # Random number generator
 seed = None
 rng = np.random.RandomState(seed)
@@ -63,11 +68,11 @@ rng = np.random.RandomState(seed)
 # number of sample inputs for testing
 samples = 20
 # fix up the data we want
-classes = [1]
+classes = [5]
 # max training vectors is 6742
-nperclass = 60
+nperclass = 600
 # up-down iterations for sampling trained network
-kupdown = 1
+kupdown = 10
 
 # training data
 datamat = sio.loadmat('data/mnist_all.mat')
@@ -75,14 +80,24 @@ datamat = sio.loadmat('data/mnist_all.mat')
 datasp = np.vstack([ datamat['train'+str(d)][:nperclass]
                      for d in classes ]).astype(np.float).T
 # weight matrix (tiny random numbers)
-low = -4 * np.sqrt(6. / (nhidden + nvisible))
-high = 4 * np.sqrt(6. / (nhidden + nvisible))
+scale = 1e-10
+low = -4 * np.sqrt(6. / (nhidden + nvisible))*scale
+high = 4 * np.sqrt(6. / (nhidden + nvisible))*scale
 W = rng.uniform(size=(nvisible,nhidden), low=low, high=high)
-vbias = rng.uniform(size=(nvisible,1), low=low, high=high)
-hbias = rng.uniform(size=(nhidden,1), low=low, high=high)
+# vbias = rng.uniform(size=(nvisible,1), low=low, high=high)
+# hbias = rng.uniform(size=(nhidden,1), low=low, high=high)
+# pvis = np.average([ datasp[:nvisible][:,k:k+nperclass]
+#                     for k in xrange(0, len(classes)*nperclass, nperclass) ],
+#                   axis=2).T
+# vbias = pvis/(1.0-pvis)
+# vbias[vbias > 0] = np.log(vbias[vbias > 0])
+vbias = np.zeros((nvisible,1))
+hbias = -4.0*np.ones((nhidden,1))*0.0
 # train the weights (inplace)
-boltz.train_restricted(datasp, W, vbias, hbias, eta, 
+print W
+boltz.train_restricted(datasp, W, vbias, hbias, eta, wdecay,
                        epochs, cdk, batchsize, rng)
+print W
 # plot stuff
 fig, ax = plt.subplots(1+2*len(classes),1)
 border = 0
@@ -126,7 +141,8 @@ for icls, cls in enumerate(classes):
         classmats[cls]['inp'][29:29+nhidrow,colidxh:colidxh+nhidcol] = \
                 state[nvisible:].reshape(nhidrow,nhidcol).astype(int)
         # do some up-down samples
-        state = boltz.sample_restricted(state, W, vbias.ravel(), hbias.ravel(), kupdown)
+        state = boltz.sample_restricted(state.reshape(state.size, 1), W, 
+                                        vbias, hbias, kupdown)
         # output visibles
         classmats[cls]['out'][:28,colidx:colidx+28] = \
                                 state[:nvisible].reshape(28,28).astype(int)

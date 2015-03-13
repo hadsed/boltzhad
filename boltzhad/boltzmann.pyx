@@ -26,11 +26,13 @@ cpdef isingenergy(np.float_t [:] z,
 @cython.boundscheck(True)
 @cython.wraparound(False)
 @cython.embedsignature(True)
-cdef inline logit(x):
+cdef inline np.ndarray[np.float_t, ndim=2] logit(np.ndarray[np.float_t, ndim=2] x):
     """ Return output of the logistic function. """
-    x[x < -30] = 0
-    x[x > 30] = 1
-    return 1.0/(1.0 + np.exp(-x))
+    cdef np.ndarray[np.float_t, ndim=2] y = x.copy()
+    y[np.abs(y) < 30] = 1.0/(1.0 + np.exp(-y[np.abs(y) < 30]))
+    y[y < -30] = 0
+    y[y > 30] = 1
+    return y
 
 @cython.boundscheck(True)
 @cython.wraparound(False)
@@ -109,7 +111,8 @@ cdef inline contr_div_batch(np.ndarray[np.float_t, ndim=2] state,
     cdef np.ndarray[np.float_t, ndim=2] grad = np.zeros((nvisible, nhidden))
     cdef np.ndarray[np.float_t, ndim=2] gvbias = np.empty((nvisible, 1))
     cdef np.ndarray[np.float_t, ndim=2] ghbias = np.empty((nhidden, 1))
-    cdef np.ndarray[np.float_t, ndim=2] visreconprobs = np.empty((nvisible, batchsize))
+    cdef np.ndarray[np.float_t, ndim=2] vreconprobs = np.empty((nvisible, batchsize))
+    cdef np.ndarray[np.float_t, ndim=2] hreconprobs = np.empty((nhidden, batchsize))
     # positive phase
     # store initial state of visible units for bias update
     gvbias = state[:nvisible].mean(axis=1).reshape(nvisible,1)
@@ -124,15 +127,17 @@ cdef inline contr_div_batch(np.ndarray[np.float_t, ndim=2] state,
     # negative phase
     # loop over up-down passes
     for k in xrange(cdk):
-        # resample visible units
-        visreconprobs = logit(np.dot(W, state[nvisible:]) + vbias)
-        state[:nvisible] = visreconprobs > np.random.rand(nvisible,batchsize)
-        # resample hidden units
-        state[nvisible:] = (logit(np.dot(W.T, visreconprobs)) + hbias > 
-                            np.random.rand(nhidden,batchsize))
+        # resample visible units (must use hidden states, not probabilities)
+        vreconprobs = logit(np.dot(W, state[nvisible:]) + vbias)
+        state[:nvisible] = vreconprobs > np.random.rand(nvisible,batchsize)
+        # resample hidden units (we can use probabilities instead of state
+        # to reduce sampling noise)
+        # hreconprobs = logit(np.dot(W.T, vreconprobs) + hbias)
+        hreconprobs = logit(np.dot(W.T, state[:nvisible]) + hbias)
+        state[nvisible:] = hreconprobs > np.random.rand(nhidden,batchsize)
     # negative contribution
-    # grad -= np.outer(state[:nvisible], state[nvisible:])/batchsize
-    grad -= np.dot(state[:nvisible], state[nvisible:].T)/float(batchsize)
+    # grad -= np.dot(state[:nvisible], state[nvisible:].T)/float(batchsize)
+    grad -= np.dot(state[:nvisible], hreconprobs.T)/float(batchsize)
     gvbias -= state[:nvisible].mean(axis=1).reshape(nvisible,1)
     ghbias -= state[nvisible:].mean(axis=1).reshape(nhidden,1)
     return grad, gvbias, ghbias
@@ -145,7 +150,8 @@ def train_restricted(np.float_t [:, :] data,
                      np.ndarray[np.float_t, ndim=2] vbias,
                      np.ndarray[np.float_t, ndim=2] hbias,
                      float eta, 
-                     int epochs, 
+                     float wdecay,
+                     int epochs,
                      int cdk,
                      int batchsize,
                      rng):
@@ -187,43 +193,30 @@ def train_restricted(np.float_t [:, :] data,
     # check that the data vectors are the right length
     if W.shape[0] != data.shape[0]:
         print("Warning: data and weight matrix shapes don't match.")
-    if batchsize > 0:
-        # training epochs
-        for ep in xrange(epochs):
-            # train W using MCMC for each training vector
-            # for idat in rng.permutation(range(0,data.shape[1]-batchsize,batchsize)):
-            for idat in xrange(data.shape[1]/batchsize):
-                # initialize state to the training vector
-                dstep = min(idat+batchsize, data.shape[1])
-                state[:nvisible] = data[:,idat:dstep]
-                # get gradient updates (weights, visible bias, hidden bias) from CD
-                gw, gv, gh = contr_div_batch(state, W, vbias, hbias, cdk)
-                # update weights and biases
-                W += gw*eta
-                vbias += gv*eta
-                hbias += gh*eta
-    else:
-        # training epochs
-        for ep in xrange(epochs):
-            # train W using MCMC for each training vector
-            for idat in rng.permutation(range(data.shape[1])):
-                # initialize state to the training vector
-                state[:nvisible,0] = data[:,idat]
-                # get gradient updates (weights, visible bias, hidden bias) from CD
-                gw, gv, gh = contr_div(state, W, vbias, hbias, cdk)
-                # update weights and biases
-                W += gw*eta
-                vbias += gv*eta
-                hbias += gh*eta
+    # training epochs
+    for ep in xrange(epochs):
+        # randomize order of data to reduce bias
+        data = rng.permutation(data.T).T
+        # train W using MCMC for each training vector
+        for idat in xrange(data.shape[1]/batchsize):
+            # initialize state to the training vector
+            dstep = min(idat+batchsize, data.shape[1])
+            state[:nvisible] = data[:,idat:dstep]
+            # get gradient updates (weights, visible bias, hidden bias) from CD
+            gw, gv, gh = contr_div_batch(state, W, vbias, hbias, cdk)
+            # update weights and biases
+            W += (gw + W*wdecay)*eta
+            vbias += gv*eta
+            hbias += gh*eta
     return W, vbias, hbias
 
 @cython.boundscheck(True)
 @cython.wraparound(False)
 @cython.embedsignature(True)
-def sample_restricted(np.ndarray[np.float_t, ndim=1] state,
+def sample_restricted(np.ndarray[np.float_t, ndim=2] state,
                       np.ndarray[np.float_t, ndim=2] W,
-                      np.ndarray[np.float_t, ndim=1] vbias,
-                      np.ndarray[np.float_t, ndim=1] hbias,
+                      np.ndarray[np.float_t, ndim=2] vbias,
+                      np.ndarray[np.float_t, ndim=2] hbias,
                       int ksteps):
     """
     This method implements a @k-step Gibbs sampler for
@@ -233,17 +226,16 @@ def sample_restricted(np.ndarray[np.float_t, ndim=1] state,
     """
     cdef int nvisible = W.shape[0]
     cdef int nhidden = W.shape[1]
+    cdef int batchsize = 1
     # sample hidden units given some starting state for visibles
     state[nvisible:] = (logit(np.dot(W.T, state[:nvisible]) + hbias) > 
-                        np.random.rand(nhidden))
+                        np.random.rand(nhidden,batchsize))
     # loop over up-down passes
     for k in xrange(ksteps):
         # sample visible units
-        # visreconprobs = logit(np.dot(W, state[nvisible:]) + vbias)
-        # state[:nvisible] = visreconprobs > np.random.rand(nvisible)
         state[:nvisible] = (logit(np.dot(W, state[nvisible:]) + vbias) > 
-                            np.random.rand(nvisible))
+                            np.random.rand(nvisible,batchsize))
         # sample hidden units
         state[nvisible:] = (logit(np.dot(W.T, state[:nvisible])) + hbias > 
-                            np.random.rand(1, nhidden))
+                            np.random.rand(nhidden, batchsize))
     return state
