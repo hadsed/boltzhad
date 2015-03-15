@@ -118,17 +118,16 @@ cdef inline contr_div_batch(np.ndarray[np.float_t, ndim=2] state,
     cdef int nhidden = hbias.shape[0]
     cdef int k = 0
     cdef int batchsize = state.shape[1]
+    cdef np.ndarray[np.float_t, ndim=2] initstate = state.copy()
     cdef np.ndarray[np.float_t, ndim=2] vreconprobs = np.empty((nvisible, batchsize))
     cdef np.ndarray[np.float_t, ndim=2] hreconprobs = np.empty((nhidden, batchsize))
     # positive phase
-    # store initial state of visible units for bias update
-    gvbias[:] = state[:nvisible].mean(axis=1).reshape(nvisible,1)
     # calculate hidden unit state given the visibles (training vec) and
     # sample for the actual state using activation probabilities
     state[nvisible:] = (logit(np.dot(W.T, state[:nvisible]) + hbias) > 
                         np.random.rand(nhidden,batchsize))
     # store initial state of visible units for bias update
-    ghbias[:] = state[nvisible:].mean(axis=1).reshape(nhidden,1)
+    initstate[nvisible:] = state[nvisible:].copy()
     # positive contribution
     grad[:] = np.dot(state[:nvisible], state[nvisible:].T)/float(batchsize)
     # negative phase
@@ -145,8 +144,10 @@ cdef inline contr_div_batch(np.ndarray[np.float_t, ndim=2] state,
     # negative contribution
     # grad[:] -= np.dot(pchain[:nvisible], pchain[nvisible:].T)/float(batchsize)
     grad -= np.dot(pchain[:nvisible], hreconprobs.T)/float(batchsize)
-    gvbias[:] -= state[:nvisible].mean(axis=1).reshape(nvisible,1)
-    ghbias[:] -= state[nvisible:].mean(axis=1).reshape(nhidden,1)
+    gvbias[:] = (initstate[:nvisible] - 
+                 state[:nvisible]).mean(axis=1).reshape(nvisible,1)
+    ghbias[:] = (initstate[nvisible:] - 
+                 state[nvisible:]).mean(axis=1).reshape(nhidden,1)
 
 @cython.boundscheck(True)
 @cython.wraparound(False)
