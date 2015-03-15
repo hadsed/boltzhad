@@ -13,7 +13,7 @@ cimport cython
 from libc.math cimport exp as cexp
 from libc.stdlib cimport rand as crand
 from libc.stdlib cimport RAND_MAX as RAND_MAX
-
+import matplotlib.pyplot as plt
 
 @cython.boundscheck(True)
 @cython.wraparound(False)
@@ -116,38 +116,35 @@ cdef inline contr_div_batch(np.ndarray[np.float_t, ndim=2] state,
     """
     cdef int nvisible = vbias.shape[0]
     cdef int nhidden = hbias.shape[0]
-    cdef int k = 0
     cdef int batchsize = state.shape[1]
-    cdef np.ndarray[np.float_t, ndim=2] initstate = state.copy()
+    cdef int k = 0
     cdef np.ndarray[np.float_t, ndim=2] vreconprobs = np.empty((nvisible, batchsize))
     cdef np.ndarray[np.float_t, ndim=2] hreconprobs = np.empty((nhidden, batchsize))
     # positive phase
-    # calculate hidden unit state given the visibles (training vec) and
+    # calculate hidden unit state given the visibles (training vec)
+    state[nvisible:] = logit(np.dot(W.T, state[:nvisible]) + hbias)
     # sample for the actual state using activation probabilities
-    state[nvisible:] = (logit(np.dot(W.T, state[:nvisible]) + hbias) > 
-                        np.random.rand(nhidden,batchsize))
-    # store initial state of visible units for bias update
-    initstate[nvisible:] = state[nvisible:].copy()
-    # positive contribution
-    grad[:] = np.dot(state[:nvisible], state[nvisible:].T)/float(batchsize)
+    state[nvisible:] = state[nvisible:] > np.random.rand(nhidden,batchsize)
+    # positive contribution (use the probabilities)
+    grad[:] = np.dot(state[:nvisible], state[nvisible:].T)
     # negative phase
     # loop over up-down passes (using the persistent negative Gibbs chain)
     for k in xrange(cdk):
         # resample visible units (must use hidden states, not probabilities)
         vreconprobs = logit(np.dot(W, pchain[nvisible:]) + vbias)
         pchain[:nvisible] = vreconprobs > np.random.rand(nvisible,batchsize)
-        # resample hidden units (we can use probabilities instead of state
-        # to reduce sampling noise)
+        # resample hidden units
         # hreconprobs = logit(np.dot(W.T, vreconprobs) + hbias)
         hreconprobs = logit(np.dot(W.T, pchain[:nvisible]) + hbias)
         pchain[nvisible:] = hreconprobs > np.random.rand(nhidden,batchsize)
     # negative contribution
     # grad[:] -= np.dot(pchain[:nvisible], pchain[nvisible:].T)/float(batchsize)
-    grad -= np.dot(pchain[:nvisible], hreconprobs.T)/float(batchsize)
-    gvbias[:] = (initstate[:nvisible] - 
-                 state[:nvisible]).mean(axis=1).reshape(nvisible,1)
-    ghbias[:] = (initstate[nvisible:] - 
-                 state[nvisible:]).mean(axis=1).reshape(nhidden,1)
+    # grad[:] = (grad - np.dot(pchain[:nvisible], hreconprobs.T))/float(batchsize)
+    grad[:] = (grad - np.dot(vreconprobs, hreconprobs.T))/float(batchsize)
+    gvbias[:] = (state[:nvisible] - 
+                 pchain[:nvisible]).mean(axis=1).reshape(nvisible,1)
+    ghbias[:] = (state[nvisible:] - 
+                 pchain[nvisible:]).mean(axis=1).reshape(nhidden,1)
 
 @cython.boundscheck(True)
 @cython.wraparound(False)
@@ -161,7 +158,8 @@ def train_restricted(np.float_t [:, :] data,
                      int epochs,
                      int cdk,
                      int batchsize,
-                     rng):
+                     rng,
+                     int debug):
     """
     Train a restricted Boltzmann machine on @data. Number of 
     Monte Carlo steps in the Gibbs sampler is @nsteps, @T
@@ -193,31 +191,81 @@ def train_restricted(np.float_t [:, :] data,
     cdef int ep = 0
     cdef int idat = 0
     cdef int dstep = 0
-    cdef np.ndarray[np.float_t, ndim=2] state = np.empty((nvisible+nhidden, batchsize))
-    cdef np.ndarray[np.float_t, ndim=2] pchain = rng.binomial(1,0.5,
-                                                              (nvisible+nhidden, 
-                                                               batchsize)).astype(np.float)
+    cdef np.float_t [:,:] firstdata = data
+    cdef np.ndarray[np.float_t, ndim=2] state = \
+        np.empty((nvisible+nhidden, batchsize))
+    cdef np.ndarray[np.float_t, ndim=2] pchain = \
+        rng.binomial(1,0.5,
+                     (nvisible+nhidden, 
+                      batchsize)).astype(np.float)
     cdef np.ndarray[np.float_t, ndim=2] gw = np.empty((nvisible, nhidden))
     cdef np.ndarray[np.float_t, ndim=2] gv = np.empty((nvisible, 1))
     cdef np.ndarray[np.float_t, ndim=2] gh = np.empty((nhidden, 1))
     # check that the data vectors are the right length
     if W.shape[0] != data.shape[0]:
         print("Warning: data and weight matrix shapes don't match.")
-    # training epochs
-    for ep in xrange(epochs):
-        # randomize order of data to reduce bias
-        data = rng.permutation(data.T).T
-        # train W using MCMC for each training vector
-        for idat in xrange(data.shape[1]/batchsize):
-            # initialize state to the training vector
-            dstep = min(idat+batchsize, data.shape[1])
-            state[:nvisible] = data[:,idat:dstep]
-            # calculate gradient updates (weights, visible bias, hidden bias) from CD
-            contr_div_batch(state, pchain, W, vbias, hbias, gw, gv, gh, cdk)
-            # update weights and biases
-            W += (gw + W*wdecay)*eta
-            vbias += gv*eta
-            hbias += gh*eta
+    if debug:
+        fig, ax = plt.subplots(1,1,figsize=(9,10))
+        # examine hidden activations before training
+        ax.matshow(logit(np.dot(W.T, firstdata) + hbias).T, 
+                   cmap='Greys',
+                   vmin=0,
+                   vmax=1)
+        plt.savefig('figs_boltz_digits/hidden_act_0.png')
+        # training epochs
+        for ep in xrange(epochs):
+            # randomize order of data to reduce bias
+            data = rng.permutation(data.T).T
+            # train W using MCMC for each training vector
+            for idat in xrange(data.shape[1]/batchsize):
+                # initialize state to the training vector
+                dstep = min(idat+batchsize, data.shape[1])
+                state[:nvisible] = data[:,idat:dstep]
+                # calculate gradient updates (weights, visible bias, hidden bias) from CD
+                contr_div_batch(state, pchain, W, vbias, hbias, gw, gv, gh, cdk)
+                # update weights and biases
+                W += (gw - W*wdecay)*eta
+                vbias += gv*eta
+                hbias += gh*eta
+            # plot histograms of weights and biases, and of the last gradient
+            figh, axh = plt.subplots(2,3,figsize=(20,10))
+            axh[0,0].hist(vbias)
+            axh[0,0].set_title("vbias mean = "+str(np.mean(np.fabs(vbias))))
+            axh[0,1].hist(W.ravel())
+            axh[0,1].set_title("W mean = "+str(np.mean(np.fabs(W.ravel()))))
+            axh[0,2].hist(hbias)
+            axh[0,2].set_title("hbias mean = "+str(np.mean(np.fabs(hbias))))
+            axh[1,0].hist(gv)
+            axh[1,0].set_title("dvbias mean = "+str(np.mean(np.fabs(gv))))
+            axh[1,1].hist(gw.ravel())
+            axh[1,1].set_title("dW mean = "+str(np.mean(np.fabs(gw.ravel()))))
+            axh[1,2].hist(gh)
+            axh[1,2].set_title("dhbias mean = "+str(np.mean(np.fabs(gh))))
+            figh.savefig('figs_boltz_digits/hist_ep'+str(ep))#+'_d'+str(idat))
+            plt.close(figh)
+            # examine hidden activations after training
+            ax.matshow(logit(np.dot(W.T, firstdata) + hbias).T, 
+                       cmap='Greys',
+                       vmin=0,
+                       vmax=1)
+            fig.savefig('figs_boltz_digits/hidden_act_'+str(ep)+'.png')
+        plt.close(fig)
+    else:
+        # training epochs
+        for ep in xrange(epochs):
+            # randomize order of data to reduce bias
+            data = rng.permutation(data.T).T
+            # train W using MCMC for each training vector
+            for idat in xrange(data.shape[1]/batchsize):
+                # initialize state to the training vector
+                dstep = min(idat+batchsize, data.shape[1])
+                state[:nvisible] = data[:,idat:dstep]
+                # calculate gradient updates (weights, visible bias, hidden bias) from CD
+                contr_div_batch(state, pchain, W, vbias, hbias, gw, gv, gh, cdk)
+                # update weights and biases
+                W += (gw - W*wdecay)*eta
+                vbias += gv*eta
+                hbias += gh*eta
     return W, vbias, hbias
 
 @cython.boundscheck(True)

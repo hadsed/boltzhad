@@ -39,29 +39,52 @@ def spins2bitstr(vec):
 def logit(x):
     return 1.0/(1.0 + np.exp(-x))
 
+def hinton(matrix, max_weight=None, ax=None):
+    """Draw Hinton diagram for visualizing a weight matrix."""
+    ax = ax if ax is not None else plt.gca()
+
+    if not max_weight:
+        max_weight = 2**np.ceil(np.log(np.abs(matrix).max())/np.log(2))
+
+    ax.patch.set_facecolor('gray')
+    ax.set_aspect('equal', 'box')
+    ax.xaxis.set_major_locator(plt.NullLocator())
+    ax.yaxis.set_major_locator(plt.NullLocator())
+
+    for (x,y),w in np.ndenumerate(matrix):
+        color = 'white' if w > 0 else 'black'
+        size = np.sqrt(np.abs(w))
+        rect = plt.Rectangle([x - size / 2, y - size / 2], size, size,
+                             facecolor=color, edgecolor=color)
+        ax.add_patch(rect)
+
+    ax.autoscale_view()
+    ax.invert_yaxis()
+
 # number of visible units (must be equal to data length)
 nvisible = 320
 # number of hidden units
 # nhidden = 50
 # for plotting
-nhidrow = 8  # essentially unbounded
+nhidrow = 5  # essentially unbounded
 nhidcol = 16  # should be less than 16
 nhidden = nhidrow*nhidcol
 # number of MCMC steps in CD
-cdk = 3
+cdk = 10
 # size of the minibatch for each gradient update
 batchsize = 1
 # learning rate
-eta = 0.001
+eta = 1e-4
 # training epochs
 # (if we're low on data, we can set this higher)
 epochs = 1000
 # weight decay term
-wdecay = 0.0005
+wdecay = 1e-5
 # Random number generator
 seed = None
 rng = np.random.RandomState(seed)
-
+# debug with plots
+debug = 1
 # number of sample inputs for testing
 samples = 10
 # fix up the data we want (up to 36)
@@ -85,15 +108,20 @@ datasp = np.asarray(
 # reshape to make 2D data matrix (neurons x training vecs)
 datasp = datasp.reshape(-1, datasp.shape[-1]).T
 # weight matrix (tiny random numbers)
-scale = 1e-5
+scale = 1e-8
 W = rng.rand(nvisible,nhidden)*scale
-vbias = rng.rand(nvisible, 1)*scale
-hbias = rng.rand(nhidden, 1)*scale
+# vbias = rng.rand(nvisible, 1)*scale
+# hbias = rng.rand(nhidden, 1)*scale
+vbias = np.zeros((nvisible,1))
+hbias = np.zeros((nhidden,1))
 # train the weights (inplace)
 print("Training...")
 boltz.train_restricted(datasp, W, vbias, hbias, eta, wdecay, 
-                       epochs, cdk, batchsize, rng)
+                       epochs, cdk, batchsize, rng, debug)
 print("Training complete.")
+# plot a Hinton diagram for the learned weights
+# hinton(W)
+# plt.show()
 # plot stuff
 fig, ax = plt.subplots(1+2*len(classes),2, figsize=(9,10))
 border = 0
@@ -119,17 +147,17 @@ for icls, cls in enumerate(classes):
                        'out': outmat.copy() }
     filtermats[cls] = { 'inp': inpmat.copy(), 
                         'out': outmat.copy() }
-    # initialize a random state for filters
-    filterstate1 = np.asarray(np.random.binomial(1, 0.5, nvisible+nhidden),
-                              dtype=np.float)
-    filterstate2 = np.asarray(np.random.binomial(1, 0.5, nvisible+nhidden),
-                              dtype=np.float)
     # gather samples and add them to plotting matrix
     for isample in xrange(samples):
         colidx = isample*16
         colidxh = colidx
         # choose input vector (not from training data)
-        inpidx = nperclass+isample-1
+        inpidx = nperclass+isample
+        # initialize a random state for filters
+        filterstate1 = np.asarray(np.random.binomial(1, 0.5, nvisible+nhidden),
+                                  dtype=np.float)
+        filterstate2 = np.asarray(np.random.binomial(1, 0.5, nvisible+nhidden),
+                                  dtype=np.float)
         # propagate random state to get some filter
         filterstate1 = boltz.sample_restricted(
             filterstate1.reshape(filterstate1.size,1), 
@@ -210,10 +238,10 @@ for val in classmats.itervalues():
 # random filter rows
 iax = 1
 for val in filtermats.itervalues():
-    ax[iax,1].set_title("Filters (left to right "+
+    ax[iax,1].set_title("Random Filters (after "+
                         str(kupdown_filter)+" Gibbs steps)")
     ax[iax,1].matshow(val['inp'], cmap=matplotlib.cm.binary)
-    ax[iax+1,1].set_title("Filters (left to right "+
+    ax[iax+1,1].set_title("Random Filters (after "+
                         str(kupdown_filter)+" Gibbs steps)")
     ax[iax+1,1].matshow(val['out'], cmap=matplotlib.cm.binary)
     iax += 2
@@ -222,4 +250,4 @@ for r in ax:
     for kax in r:
         kax.get_xaxis().set_visible(False)
         kax.get_yaxis().set_visible(False)
-plt.show()
+plt.savefig('figs_boltz_digits/final.png')
