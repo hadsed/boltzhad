@@ -141,10 +141,10 @@ cdef inline contr_div_batch(np.ndarray[np.float_t, ndim=2] state,
     # grad[:] -= np.dot(pchain[:nvisible], pchain[nvisible:].T)/float(batchsize)
     # grad[:] = (grad - np.dot(pchain[:nvisible], hreconprobs.T))/float(batchsize)
     grad[:] = (grad - np.dot(vreconprobs, hreconprobs.T))/float(batchsize)
-    gvbias[:] = (state[:nvisible] - 
-                 pchain[:nvisible]).mean(axis=1).reshape(nvisible,1)
-    ghbias[:] = (state[nvisible:] - 
-                 pchain[nvisible:]).mean(axis=1).reshape(nhidden,1)
+    gvbias[:] = ((state[:nvisible].sum(axis=1) - pchain[:nvisible].sum(axis=1))/
+                 float(batchsize)).reshape(nvisible,1)
+    ghbias[:] = ((state[nvisible:].sum(axis=1) - pchain[nvisible:].sum(axis=1))/
+                 float(batchsize)).reshape(nhidden,1)
 
 @cython.boundscheck(True)
 @cython.wraparound(False)
@@ -235,12 +235,12 @@ def train_restricted(np.float_t [:, :] data,
             axh[0,1].set_title("W mean = "+str(np.mean(np.fabs(W.ravel()))))
             axh[0,2].hist(hbias)
             axh[0,2].set_title("hbias mean = "+str(np.mean(np.fabs(hbias))))
-            axh[1,0].hist(gv)
-            axh[1,0].set_title("dvbias mean = "+str(np.mean(np.fabs(gv))))
-            axh[1,1].hist(gw.ravel())
-            axh[1,1].set_title("dW mean = "+str(np.mean(np.fabs(gw.ravel()))))
-            axh[1,2].hist(gh)
-            axh[1,2].set_title("dhbias mean = "+str(np.mean(np.fabs(gh))))
+            axh[1,0].hist(gv*eta)
+            axh[1,0].set_title("dvbias mean = "+str(np.mean(np.fabs(gv*eta))))
+            axh[1,1].hist(gw.ravel()*eta)
+            axh[1,1].set_title("dW mean = "+str(np.mean(np.fabs(gw.ravel()*eta))))
+            axh[1,2].hist(gh*eta)
+            axh[1,2].set_title("dhbias mean = "+str(np.mean(np.fabs(gh*eta))))
             figh.savefig('figs_boltz_digits/hist_ep'+str(ep))#+'_d'+str(idat))
             plt.close(figh)
             # examine hidden activations after training

@@ -70,11 +70,11 @@ nhidrow = 5  # essentially unbounded
 nhidcol = 16  # should be less than 16
 nhidden = nhidrow*nhidcol
 # number of MCMC steps in CD
-cdk = 10
+cdk = 1
 # size of the minibatch for each gradient update
 batchsize = 1
 # learning rate
-eta = 1e-4
+eta = 1e-3
 # training epochs
 # (if we're low on data, we can set this higher)
 epochs = 1000
@@ -84,7 +84,7 @@ wdecay = 1e-5
 seed = None
 rng = np.random.RandomState(seed)
 # debug with plots
-debug = 1
+debug = 0
 # number of sample inputs for testing
 samples = 10
 # fix up the data we want (up to 36)
@@ -119,6 +119,19 @@ print("Training...")
 boltz.train_restricted(datasp, W, vbias, hbias, eta, wdecay, 
                        epochs, cdk, batchsize, rng, debug)
 print("Training complete.")
+# plot the filters
+fig, ax = plt.subplots(1, 1, figsize=(10,5))
+filtermat = np.zeros((20*nhidrow, 16*nhidcol))
+for row in xrange(nhidrow):
+    for col in xrange(nhidcol):
+        ridx = 20*row
+        cidx = 16*col
+        filtermat[ridx:ridx+20, cidx:cidx+16] = \
+                W[:,row*col+row].reshape(20,16)
+ax.matshow(filtermat, cmap=matplotlib.cm.binary)
+ax.get_xaxis().set_visible(False)
+ax.get_yaxis().set_visible(False)
+fig.savefig('figs_boltz_digits/filters.png')
 # plot a Hinton diagram for the learned weights
 # hinton(W)
 # plt.show()
@@ -235,13 +248,13 @@ for val in classmats.itervalues():
     ax[iax+1,0].set_title("Result ("+str(kupdown_inp)+" Gibbs steps)")
     ax[iax+1,0].matshow(val['out'], cmap=matplotlib.cm.binary)
     iax += 2
-# random filter rows
+# random state rows
 iax = 1
 for val in filtermats.itervalues():
-    ax[iax,1].set_title("Random Filters (after "+
+    ax[iax,1].set_title("Random states (after "+
                         str(kupdown_filter)+" Gibbs steps)")
     ax[iax,1].matshow(val['inp'], cmap=matplotlib.cm.binary)
-    ax[iax+1,1].set_title("Random Filters (after "+
+    ax[iax+1,1].set_title("Random states (after "+
                         str(kupdown_filter)+" Gibbs steps)")
     ax[iax+1,1].matshow(val['out'], cmap=matplotlib.cm.binary)
     iax += 2
@@ -250,4 +263,5 @@ for r in ax:
     for kax in r:
         kax.get_xaxis().set_visible(False)
         kax.get_yaxis().set_visible(False)
-plt.savefig('figs_boltz_digits/final.png')
+fig.savefig('figs_boltz_digits/final.png')
+plt.close(fig)
