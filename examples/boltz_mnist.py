@@ -12,10 +12,12 @@ import numpy as np
 import scipy.io as sio
 import matplotlib
 import matplotlib.pyplot as plt
+import PIL.Image as Image
 
 import boltzhad.hopfield as hopfield
 import boltzhad.boltzmann as boltz
 import boltzhad.sa as sa
+from boltzhad.utils import tile_raster_images
 
 
 def bits2spins(vec):
@@ -47,112 +49,133 @@ nvisible = 784
 # number of hidden units
 # nhidden = 50
 # for plotting
-nhidrow = 10  # essentially unbounded
+nhidrow = 8  # essentially unbounded
 nhidcol = 28  # should be less than 16
 nhidden = nhidrow*nhidcol
 # number of MCMC steps in CD
-cdk = 5
+cdk = 15
 # number of training examples in batch update
-batchsize = 10
+batchsize = 20
 # learning rate
 eta = 0.1
 # training epochs
 # (if we're low on data, we can set this higher)
-epochs = 10
+epochs = 15
 # rate of weight decay
-wdecay = 0.001
+wdecay = 0.0
 # Random number generator
 seed = None
 rng = np.random.RandomState(seed)
-
+# debug with output plots
+debug = 1
 # number of sample inputs for testing
 samples = 20
 # fix up the data we want
-classes = [5]
-# max training vectors is 6742
-nperclass = 600
+classes = [0]#range(10)
+# max training vectors is (by index):
+# [5923, 6742, 5958, 6131, 5842, 5421, 5918, 6265, 5851, 5949]
+# min of that is 5421
+nperclass = 5000
 # up-down iterations for sampling trained network
-kupdown = 10
+kupdown_inp = 10
+# use a persistent chain?
+persistent = False
+# update gradients with probabilities (not sampled states)?
+useprobs = True
 
 # training data
 datamat = sio.loadmat('data/mnist_all.mat')
 # construct list of training vecs for each class
 datasp = np.vstack([ datamat['train'+str(d)][:nperclass]
                      for d in classes ]).astype(np.float).T
+# normalize
+datasp /= float(255)
 # weight matrix (tiny random numbers)
-scale = 1e-10
+scale = 1.0
 low = -4 * np.sqrt(6. / (nhidden + nvisible))*scale
 high = 4 * np.sqrt(6. / (nhidden + nvisible))*scale
 W = rng.uniform(size=(nvisible,nhidden), low=low, high=high)
-# vbias = rng.uniform(size=(nvisible,1), low=low, high=high)
-# hbias = rng.uniform(size=(nhidden,1), low=low, high=high)
+vbias = rng.uniform(size=(nvisible,1), low=low, high=high)
+hbias = rng.uniform(size=(nhidden,1), low=low, high=high)
 # pvis = np.average([ datasp[:nvisible][:,k:k+nperclass]
 #                     for k in xrange(0, len(classes)*nperclass, nperclass) ],
 #                   axis=2).T
 # vbias = pvis/(1.0-pvis)
 # vbias[vbias > 0] = np.log(vbias[vbias > 0])
-vbias = np.zeros((nvisible,1))
-hbias = -4.0*np.ones((nhidden,1))*0.0
+# vbias = np.zeros((nvisible,1))
+# hbias = -4.0*np.ones((nhidden,1))*0.0
 # train the weights (inplace)
-print W
+print("Beginning training...")
 boltz.train_restricted(datasp, W, vbias, hbias, eta, wdecay,
-                       epochs, cdk, batchsize, rng)
-print W
-# plot stuff
-fig, ax = plt.subplots(1+2*len(classes),1)
-border = 0
-# create a matrix to hold all the stuff we want to plot
-trainmat = -1.0*np.ones((28*len(classes), nperclass*28))
-inpmat = -1.0*np.ones((28+nhidrow+1, samples*(28+border)))
-outmat = -1.0*np.ones((28+nhidrow+1, samples*(28+border)))
-classmats = {}
-# first row is the training images
-for itvec, tvec in enumerate(datasp.T):
-    # how many training per class
-    cpart = datasp.shape[1]/len(classes)
-    # class id
-    cidx = (itvec - (itvec % cpart)) / cpart
-    # column index
-    colidx = (itvec % cpart)*28
-    # fill array
-    trainmat[28*cidx:28*(cidx+1),colidx:colidx+28] = tvec.reshape(28,28).astype(int)
+                       epochs, cdk, batchsize, rng, debug,
+                       persistent, useprobs)
+print("Training complete.")
+# plot the filters
+image = Image.fromarray(
+    tile_raster_images(
+        X=W.T,
+        img_shape=(28, 28),
+        tile_shape=(nhidrow, nhidcol),
+        tile_spacing=(1, 1)
+        )
+    )
+image.save('figs_boltz_mnist/filters.png')
+print("Filters plotted.")
+
+# # plot training images
+# trainmat = -1.0*np.ones((28*len(classes), nperclass*28))
+# for itvec, tvec in enumerate(datasp.T):
+#     # how many training per class
+#     cpart = datasp.shape[1]/len(classes)
+#     # class id
+#     cidx = (itvec - (itvec % cpart)) / cpart
+#     # column index
+#     colidx = (itvec % cpart)*28
+#     # fill array
+#     trainmat[28*cidx:28*(cidx+1),colidx:colidx+28] = tvec.reshape(28,28).astype(int)
+# # switch zeros and negative ones
+# trainmat[trainmat == 0] = -2
+# trainmat[trainmat == -1] = 0
+# trainmat[trainmat == -2] = -1
+
+# we'll need this
+state = np.asarray(np.random.binomial(1, 0.5, nvisible+nhidden), dtype=np.float)
 # loop through the classes
+inpmat = -1.0*np.ones((28+nhidrow+1, samples*28))
+outmat = -1.0*np.ones((28+nhidrow+1, samples*28))
+classmats = {}
 for icls, cls in enumerate(classes):
     classmats[cls] = { 'inp': inpmat.copy(), 
                        'out': outmat.copy() }
     # gather samples and add them to plotting matrix
     for isample in xrange(samples):
+        colidx = isample*28
+        colidxh = colidx
         # choose input vector (not from training data)
-        inpidx = nperclass+isample-1
-        # initialize a random state
-        state = np.asarray(np.random.binomial(1, 0.5, nvisible+nhidden),
-                           dtype=np.float)
+        inpidx = nperclass+isample
         # set visible units to a test image
         state[:nvisible] = datamat['train'+str(cls)][inpidx]
         # calculate hidden unit probabilties given the visibles
         state[nvisible:] = (logit(np.dot(W.T, state[:nvisible])) > 
                             np.random.rand(nhidden))
         # input visible units
-        colidx = isample*28
-        colidxh = colidx
         classmats[cls]['inp'][:28,colidx:colidx+28] = \
                                 state[:nvisible].reshape(28,28).astype(int)
         # input hidden units
         classmats[cls]['inp'][29:29+nhidrow,colidxh:colidxh+nhidcol] = \
                 state[nvisible:].reshape(nhidrow,nhidcol).astype(int)
         # do some up-down samples
-        state = boltz.sample_restricted(state.reshape(state.size, 1), W, 
-                                        vbias, hbias, kupdown)
+        print("Sampling for input #"+str(isample))
+        state = boltz.sample_restricted(state.reshape(state.size,1), 
+                                        W, vbias, hbias, kupdown_inp).ravel()
+        print("Sampling #"+str(isample)+" done.")
         # output visibles
         classmats[cls]['out'][:28,colidx:colidx+28] = \
                                 state[:nvisible].reshape(28,28).astype(int)
         # output hiddens
         classmats[cls]['out'][29:29+nhidrow,colidxh:colidxh+nhidcol] = \
                 state[nvisible:].reshape(nhidrow,nhidcol).astype(int)
-# switch zeros and negative ones
-trainmat[trainmat == 0] = -2
-trainmat[trainmat == -1] = 0
-trainmat[trainmat == -2] = -1
+# switch zeros and negative ones for a nicer picture
 for k in classmats.iterkeys():
     classmats[k]['inp'][classmats[k]['inp'] == 0] = -2
     classmats[k]['inp'][classmats[k]['inp'] == -1] = 0
@@ -160,19 +183,45 @@ for k in classmats.iterkeys():
     classmats[k]['out'][classmats[k]['out'] == 0] = -2
     classmats[k]['out'][classmats[k]['out'] == -1] = 0
     classmats[k]['out'][classmats[k]['out'] == -2] = -1
-# plot them
-ax[0].set_title("Training data")
-ax[0].matshow(trainmat, cmap=matplotlib.cm.binary)
-# input rows
-iax = 1
-for val in classmats.itervalues():
-    ax[iax].set_title("Inputs (visible then hidden units)")
-    ax[iax].matshow(val['inp'], cmap=matplotlib.cm.binary)
-    ax[iax+1].set_title("Result (after "+str(kupdown)+" up-down samples)")
-    ax[iax+1].matshow(val['out'], cmap=matplotlib.cm.binary)
-    iax += 2
+# plot inputs and reconstructions
+ckeys = list(classmats.itervalues())
+cols = 2 if len(ckeys) > 5 else 1
+rows = len(classes) if len(ckeys) > 5 else 2*len(classes)
+fig, ax = plt.subplots(rows, cols, figsize=(10,5))
+fig.subplots_adjust(hspace=0, wspace=0.1, left=0.1, right=0.9, bottom=0.1, top=0.9)
+iax = 0
+# if less than 5 classes
+if cols == 1:
+    for val in ckeys:
+        ax[iax].matshow(val['inp'], cmap=matplotlib.cm.binary)
+        ax[iax+1].matshow(val['out'], cmap=matplotlib.cm.binary)
+        iax += 2
+# more than 5 classes (2 columns)
+else:
+    for val in ckeys[:len(ckeys)/2]:
+        ax[iax,0].matshow(val['inp'], cmap=matplotlib.cm.binary)
+        ax[iax+1,0].matshow(val['out'], cmap=matplotlib.cm.binary)
+        iax += 2
+    iax = 0
+    for val in ckeys[len(ckeys)/2:]:
+        ax[iax,1].matshow(val['inp'], cmap=matplotlib.cm.binary)
+        ax[iax+1,1].matshow(val['out'], cmap=matplotlib.cm.binary)
+        iax += 2
 # remove axes
-for kax in ax:
-    kax.get_xaxis().set_visible(False)
-    kax.get_yaxis().set_visible(False)
-plt.show()
+if isinstance(ax, list) or isinstance(ax, np.ndarray):
+    for r in ax:
+        if isinstance(r, list) or isinstance(r, np.ndarray):
+            for kax in r:
+                kax.get_xaxis().set_visible(False)
+                kax.get_yaxis().set_visible(False)
+        else:
+            r.get_xaxis().set_visible(False)
+            r.get_yaxis().set_visible(False)
+else:
+    ax.get_xaxis().set_visible(False)
+    ax.get_yaxis().set_visible(False)
+
+
+# save and get out
+fig.savefig('figs_boltz_mnist/final.png', dpi=150)
+plt.close(fig)

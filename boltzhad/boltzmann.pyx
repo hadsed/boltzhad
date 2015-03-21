@@ -14,6 +14,9 @@ from libc.math cimport exp as cexp
 from libc.stdlib cimport rand as crand
 from libc.stdlib cimport RAND_MAX as RAND_MAX
 import matplotlib.pyplot as plt
+from utils import tile_raster_images
+import PIL.Image as Image
+
 
 @cython.boundscheck(True)
 @cython.wraparound(False)
@@ -100,7 +103,9 @@ cdef inline contr_div_batch(np.ndarray[np.float_t, ndim=2] state,
                             np.ndarray[np.float_t, ndim=2] grad,
                             np.ndarray[np.float_t, ndim=2] gvbias,
                             np.ndarray[np.float_t, ndim=2] ghbias,
-                            int cdk):
+                            int cdk,
+                            int persistent,
+                            int useprobs):
     """
     Implement contrastive divergence with @cdk up-down
     steps using given weights @W and binary start state
@@ -121,30 +126,51 @@ cdef inline contr_div_batch(np.ndarray[np.float_t, ndim=2] state,
     cdef np.ndarray[np.float_t, ndim=2] vreconprobs = np.empty((nvisible, batchsize))
     cdef np.ndarray[np.float_t, ndim=2] hreconprobs = np.empty((nhidden, batchsize))
     # positive phase
-    # calculate hidden unit state given the visibles (training vec)
-    state[nvisible:] = logit(np.dot(W.T, state[:nvisible]) + hbias)
-    # sample for the actual state using activation probabilities
-    state[nvisible:] = state[nvisible:] > np.random.rand(nhidden,batchsize)
-    # positive contribution (use the probabilities)
-    grad[:] = np.dot(state[:nvisible], state[nvisible:].T)
+    if persistent:
+        # initialize hidden units from persistent chain
+        state[nvisible:] = pchain.copy()
+    else:
+        # calculate hidden unit state given the visibles (training vec)
+        state[nvisible:] = logit(np.dot(W.T, state[:nvisible]) + hbias)
+    if useprobs:
+        # positive contribution (use the probabilities)
+        grad[:] = np.dot(state[:nvisible], state[nvisible:].T)
+        gvbias[:] = state[:nvisible].sum(axis=1).reshape(nvisible,1)
+        ghbias[:] = state[nvisible:].sum(axis=1).reshape(nhidden,1)
+        # sample for the actual state using activation probabilities
+        state[nvisible:] = state[nvisible:] > np.random.rand(nhidden,batchsize)
+    else:
+        # sample for the actual state using activation probabilities
+        state[nvisible:] = state[nvisible:] > np.random.rand(nhidden,batchsize)
+        # positive contribution (use states)
+        grad[:] = np.dot(state[:nvisible], state[nvisible:].T)
+        gvbias[:] = state[:nvisible].sum(axis=1).reshape(nvisible,1)
+        ghbias[:] = state[nvisible:].sum(axis=1).reshape(nhidden,1)
     # negative phase
     # loop over up-down passes (using the persistent negative Gibbs chain)
     for k in xrange(cdk):
         # resample visible units (must use hidden states, not probabilities)
-        vreconprobs = logit(np.dot(W, pchain[nvisible:]) + vbias)
-        pchain[:nvisible] = vreconprobs > np.random.rand(nvisible,batchsize)
+        vreconprobs = logit(np.dot(W, state[nvisible:]) + vbias)
+        state[:nvisible] = vreconprobs > np.random.rand(nvisible,batchsize)
         # resample hidden units
-        # hreconprobs = logit(np.dot(W.T, vreconprobs) + hbias)
-        hreconprobs = logit(np.dot(W.T, pchain[:nvisible]) + hbias)
-        pchain[nvisible:] = hreconprobs > np.random.rand(nhidden,batchsize)
+        hreconprobs = logit(np.dot(W.T, state[:nvisible]) + hbias)
+        state[nvisible:] = hreconprobs > np.random.rand(nhidden,batchsize)
     # negative contribution
-    # grad[:] -= np.dot(pchain[:nvisible], pchain[nvisible:].T)/float(batchsize)
-    # grad[:] = (grad - np.dot(pchain[:nvisible], hreconprobs.T))/float(batchsize)
-    grad[:] = (grad - np.dot(vreconprobs, hreconprobs.T))/float(batchsize)
-    gvbias[:] = ((state[:nvisible].sum(axis=1) - pchain[:nvisible].sum(axis=1))/
-                 float(batchsize)).reshape(nvisible,1)
-    ghbias[:] = ((state[nvisible:].sum(axis=1) - pchain[nvisible:].sum(axis=1))/
-                 float(batchsize)).reshape(nhidden,1)
+    if useprobs:
+        grad[:] = (grad - np.dot(vreconprobs, hreconprobs.T))/float(batchsize)
+        gvbias[:] = ((gvbias.T - vreconprobs.sum(axis=1)) /
+                     float(batchsize)).T
+        ghbias[:] = ((ghbias.T - hreconprobs.sum(axis=1)) /
+                     float(batchsize)).T
+    else:
+        grad[:] = (grad - np.dot(state[:nvisible], state[nvisible:].T))/float(batchsize)
+        gvbias[:] = ((gvbias.T - state[:nvisible].sum(axis=1)) /
+                     float(batchsize)).T
+        ghbias[:] = ((ghbias.T - state[nvisible:].sum(axis=1)) /
+                     float(batchsize)).T
+    if persistent:
+        # save last state of hidden units in the persistent chain
+        pchain[:] = state[nvisible:].copy()
 
 @cython.boundscheck(True)
 @cython.wraparound(False)
@@ -159,7 +185,9 @@ def train_restricted(np.float_t [:, :] data,
                      int cdk,
                      int batchsize,
                      rng,
-                     int debug):
+                     int debug,
+                     int persistent,
+                     int useprobs):
     """
     Train a restricted Boltzmann machine on @data. Number of 
     Monte Carlo steps in the Gibbs sampler is @nsteps, @T
@@ -191,27 +219,50 @@ def train_restricted(np.float_t [:, :] data,
     cdef int ep = 0
     cdef int idat = 0
     cdef int dstep = 0
-    cdef np.float_t [:,:] firstdata = data
+    cdef np.float_t [:,:] firstdata = data[:,0:1000].copy()
     cdef np.ndarray[np.float_t, ndim=2] state = \
         np.empty((nvisible+nhidden, batchsize))
     cdef np.ndarray[np.float_t, ndim=2] pchain = \
-        rng.binomial(1,0.5,
-                     (nvisible+nhidden, 
-                      batchsize)).astype(np.float)
-    cdef np.ndarray[np.float_t, ndim=2] gw = np.empty((nvisible, nhidden))
-    cdef np.ndarray[np.float_t, ndim=2] gv = np.empty((nvisible, 1))
-    cdef np.ndarray[np.float_t, ndim=2] gh = np.empty((nhidden, 1))
+        np.zeros((nhidden, batchsize)).astype(np.float)
+    cdef np.ndarray[np.float_t, ndim=2] gw = np.zeros((nvisible, nhidden))
+    cdef np.ndarray[np.float_t, ndim=2] gv = np.zeros((nvisible, 1))
+    cdef np.ndarray[np.float_t, ndim=2] gh = np.zeros((nhidden, 1))
+    cdef int nhidrow = nhidden/28
+    cdef int nhidcol = 28
+    cdef int row, col
     # check that the data vectors are the right length
     if W.shape[0] != data.shape[0]:
         print("Warning: data and weight matrix shapes don't match.")
+    # check that we didn't have larger batchsize than actual datapoints
+    if data.shape[1] < batchsize:
+        print("Warning: batchsize larger than number of data points.")
     if debug:
-        fig, ax = plt.subplots(1,1,figsize=(9,10))
+        fig, ax = plt.subplots(1,1)#,figsize=(10,10))
         # examine hidden activations before training
-        ax.matshow(logit(np.dot(W.T, firstdata) + hbias).T, 
+        ax.matshow(logit(np.dot(W.T, firstdata) + hbias), 
                    cmap='Greys',
-                   vmin=0,
+                   vmin=-1,
                    vmax=1)
-        plt.savefig('figs_boltz_digits/hidden_act_0.png')
+        plt.savefig('figs_boltz_mnist/hidden_act_0.png')
+        # plot histograms of weights and biases, and of the last gradient
+        figh, axh = plt.subplots(2,3,figsize=(20,10))
+        axh[0,0].hist(vbias)
+        axh[0,0].set_title("vbias mean = "+str(np.mean(np.fabs(vbias))))
+        axh[0,1].hist(W.ravel())
+        axh[0,1].set_title("W mean = "+str(np.mean(np.fabs(W.ravel()))))
+        axh[0,2].hist(hbias)
+        axh[0,2].set_title("hbias mean = "+str(np.mean(np.fabs(hbias))))
+        axh[1,0].hist(gv*eta)
+        axh[1,0].set_title("dvbias mean = "+str(np.mean(np.fabs(gv*eta))))
+        axh[1,1].hist(gw.ravel()*eta)
+        axh[1,1].set_title("dW mean = "+str(np.mean(np.fabs(gw.ravel()*eta))))
+        axh[1,2].hist(gh*eta)
+        axh[1,2].set_title("dhbias mean = "+str(np.mean(np.fabs(gh*eta))))
+        figh.savefig('figs_boltz_mnist/hist_ep0.png')
+        plt.close(figh)
+        # for plotting filters
+        figf, axf = plt.subplots(1, 1, figsize=(20,15))
+        filtermat = np.zeros((28*nhidrow, 28*nhidcol))
         # training epochs
         for ep in xrange(epochs):
             # randomize order of data to reduce bias
@@ -222,7 +273,8 @@ def train_restricted(np.float_t [:, :] data,
                 dstep = min(idat+batchsize, data.shape[1])
                 state[:nvisible] = data[:,idat:dstep]
                 # calculate gradient updates (weights, visible bias, hidden bias) from CD
-                contr_div_batch(state, pchain, W, vbias, hbias, gw, gv, gh, cdk)
+                contr_div_batch(state, pchain, W, vbias, hbias, gw, gv, gh, 
+                                cdk, persistent, useprobs)
                 # update weights and biases
                 W += (gw - W*wdecay)*eta
                 vbias += gv*eta
@@ -241,14 +293,35 @@ def train_restricted(np.float_t [:, :] data,
             axh[1,1].set_title("dW mean = "+str(np.mean(np.fabs(gw.ravel()*eta))))
             axh[1,2].hist(gh*eta)
             axh[1,2].set_title("dhbias mean = "+str(np.mean(np.fabs(gh*eta))))
-            figh.savefig('figs_boltz_digits/hist_ep'+str(ep))#+'_d'+str(idat))
+            figh.savefig('figs_boltz_mnist/hist_ep'+str(ep+1))#+'_d'+str(idat))
             plt.close(figh)
-            # examine hidden activations after training
-            ax.matshow(logit(np.dot(W.T, firstdata) + hbias).T, 
+            # plot the filters
+            image = Image.fromarray(
+                tile_raster_images(
+                    X=W.T,
+                    img_shape=(28, 28),
+                    tile_shape=(nhidrow, nhidcol),
+                    tile_spacing=(1, 1)
+                )
+            )
+            image.save('figs_boltz_mnist/filters_%d.png' % (ep+1))
+            # for row in xrange(nhidrow):
+            #     for col in xrange(nhidcol):
+            #         ridx = 28*row
+            #         cidx = 28*col
+            #         filtermat[ridx:ridx+28, cidx:cidx+28] = \
+            #                 W[:,row*nhidcol+col].reshape(28,28)
+            # axf.matshow(filtermat, cmap='Greys')
+            # axf.get_xaxis().set_visible(False)
+            # axf.get_yaxis().set_visible(False)
+            # figf.savefig('figs_boltz_mnist/filters_%d.png' % (ep+1))
+            # examine hidden activations during training
+            ax.matshow(logit(np.dot(W.T, firstdata) + hbias), 
                        cmap='Greys',
-                       vmin=0,
+                       vmin=-1,
                        vmax=1)
-            fig.savefig('figs_boltz_digits/hidden_act_'+str(ep)+'.png')
+            fig.savefig('figs_boltz_mnist/hidden_act_'+str(ep+1)+'.png')
+        plt.close(figf)
         plt.close(fig)
     else:
         # training epochs
@@ -261,7 +334,8 @@ def train_restricted(np.float_t [:, :] data,
                 dstep = min(idat+batchsize, data.shape[1])
                 state[:nvisible] = data[:,idat:dstep]
                 # calculate gradient updates (weights, visible bias, hidden bias) from CD
-                contr_div_batch(state, pchain, W, vbias, hbias, gw, gv, gh, cdk)
+                contr_div_batch(state, pchain, W, vbias, hbias, gw, gv, gh, 
+                                cdk, persistent, useprobs)
                 # update weights and biases
                 W += (gw - W*wdecay)*eta
                 vbias += gv*eta
