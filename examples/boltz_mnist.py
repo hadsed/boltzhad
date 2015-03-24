@@ -13,6 +13,7 @@ import scipy.io as sio
 import matplotlib
 import matplotlib.pyplot as plt
 import PIL.Image as Image
+import json
 
 import boltzhad.hopfield as hopfield
 import boltzhad.boltzmann as boltz
@@ -71,7 +72,7 @@ debug = 1
 # number of sample inputs for testing
 samples = 20
 # fix up the data we want
-classes = [0]#range(10)
+classes = range(10)
 # max training vectors is (by index):
 # [5923, 6742, 5958, 6131, 5842, 5421, 5918, 6265, 5851, 5949]
 # min of that is 5421
@@ -110,6 +111,20 @@ boltz.train_restricted(datasp, W, vbias, hbias, eta, wdecay,
                        epochs, cdk, batchsize, rng, debug,
                        persistent, useprobs)
 print("Training complete.")
+modelfname = 'figs_boltz_mnist/model.mat'
+sio.savemat(modelfname, {'w': W, 'v': vbias, 'h': hbias})
+params = {'cdk': cdk,
+          'batchsize': batchsize,
+          'learningrate': eta,
+          'weightdecay': wdecay,
+          'classes': classes,
+          'trainingperclass': nperclass,
+          'persistentchain': persistent,
+          'useprobs': useprobs,
+          'initweights': (scale*low, scale*high)}
+with open('figs_boltz_mnist/params.txt', 'w') as f:
+    json.dump(params, f)
+print("Model saved to file \"%s\"." % modelfname)
 # plot the filters
 image = Image.fromarray(
     tile_raster_images(
@@ -153,8 +168,8 @@ for icls, cls in enumerate(classes):
         colidxh = colidx
         # choose input vector (not from training data)
         inpidx = nperclass+isample
-        # set visible units to a test image
-        state[:nvisible] = datamat['train'+str(cls)][inpidx]
+        # set visible units to a (normalized) test image
+        state[:nvisible] = datamat['train'+str(cls)][inpidx]/float(255)
         # calculate hidden unit probabilties given the visibles
         state[nvisible:] = (logit(np.dot(W.T, state[:nvisible])) > 
                             np.random.rand(nhidden))

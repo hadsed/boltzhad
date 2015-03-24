@@ -240,9 +240,7 @@ def train_restricted(np.float_t [:, :] data,
         fig, ax = plt.subplots(1,1)#,figsize=(10,10))
         # examine hidden activations before training
         ax.matshow(logit(np.dot(W.T, firstdata) + hbias), 
-                   cmap='Greys',
-                   vmin=-1,
-                   vmax=1)
+                   cmap='Greys')
         plt.savefig('figs_boltz_mnist/hidden_act_0.png')
         # plot histograms of weights and biases, and of the last gradient
         figh, axh = plt.subplots(2,3,figsize=(20,10))
@@ -265,6 +263,7 @@ def train_restricted(np.float_t [:, :] data,
         filtermat = np.zeros((28*nhidrow, 28*nhidcol))
         # training epochs
         for ep in xrange(epochs):
+            print("\tEpoch %i" % ep)
             # randomize order of data to reduce bias
             data = rng.permutation(data.T).T
             # train W using MCMC for each training vector
@@ -305,21 +304,9 @@ def train_restricted(np.float_t [:, :] data,
                 )
             )
             image.save('figs_boltz_mnist/filters_%d.png' % (ep+1))
-            # for row in xrange(nhidrow):
-            #     for col in xrange(nhidcol):
-            #         ridx = 28*row
-            #         cidx = 28*col
-            #         filtermat[ridx:ridx+28, cidx:cidx+28] = \
-            #                 W[:,row*nhidcol+col].reshape(28,28)
-            # axf.matshow(filtermat, cmap='Greys')
-            # axf.get_xaxis().set_visible(False)
-            # axf.get_yaxis().set_visible(False)
-            # figf.savefig('figs_boltz_mnist/filters_%d.png' % (ep+1))
             # examine hidden activations during training
             ax.matshow(logit(np.dot(W.T, firstdata) + hbias), 
-                       cmap='Greys',
-                       vmin=-1,
-                       vmax=1)
+                       cmap='Greys')
             fig.savefig('figs_boltz_mnist/hidden_act_'+str(ep+1)+'.png')
         plt.close(figf)
         plt.close(fig)
