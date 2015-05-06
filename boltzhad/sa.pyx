@@ -180,6 +180,7 @@ cpdef Anneal(np.float_t[:] sched,
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.embedsignature(True)
+@cython.cdivision(True)
 cpdef Anneal_dense(np.float_t[:] sched, 
                    int mcsteps, 
                    np.float_t[:] svec, 
@@ -217,6 +218,8 @@ cpdef Anneal_dense(np.float_t[:] sched,
             for sidx in sidx_shuff:
                 # loop through the given spin's neighbors
                 for si in xrange(nspins):
+                    # print("yahoo3", sidx, si, ediff)
+                    # print(J[sidx,si], svec[sidx], svec[si])
                     # self-connections are not quadratic
                     if si == sidx:
                         ediff += -2.0*svec[sidx]*J[sidx,si]
@@ -227,6 +230,7 @@ cpdef Anneal_dense(np.float_t[:] sched,
                             ediff += -2.0*svec[sidx]*(J[sidx,si]*svec[si])
                         elif sidx > si:
                             ediff += -2.0*svec[sidx]*(J[si,sidx]*svec[si])
+                # print("yahoo4")
                 # Metropolis accept or reject
                 if ediff > 0.0:  # avoid overflow
                     svec[sidx] *= -1

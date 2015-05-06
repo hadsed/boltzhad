@@ -54,9 +54,9 @@ nhidrow = 8  # essentially unbounded
 nhidcol = 28  # should be less than 16
 nhidden = nhidrow*nhidcol
 # number of MCMC steps in CD
-cdk = 15
+cdk = 5
 # number of training examples in batch update
-batchsize = 20
+batchsize = 1
 # learning rate
 eta = 0.1
 # training epochs
@@ -76,7 +76,7 @@ classes = range(10)
 # max training vectors is (by index):
 # [5923, 6742, 5958, 6131, 5842, 5421, 5918, 6265, 5851, 5949]
 # min of that is 5421
-nperclass = 5000
+nperclass = 500
 # up-down iterations for sampling trained network
 kupdown_inp = 10
 # use a persistent chain?
