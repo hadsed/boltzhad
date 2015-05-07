@@ -343,7 +343,7 @@ def train_restricted(np.float_t [:, :] data,
 cdef inline sample_sa(np.ndarray[np.float_t, ndim=2] state,
                       np.float_t [:] sched,
                       int sweeps,
-                      np.float_t [:,:] J,
+                      np.ndarray[np.float_t, ndim=2] J,
                       np.float_t [:,:] W,
                       np.float_t [:,:] vbias,
                       np.float_t [:,:] hbias,
@@ -357,6 +357,8 @@ cdef inline sample_sa(np.ndarray[np.float_t, ndim=2] state,
     cdef int nvisible = vbias.shape[0]
     cdef int nhidden = hbias.shape[0]
     cdef int batchsize = 1
+    cdef np.ndarray[np.float_t, ndim=1] stateitr = state[:,0].copy()
+    cdef np.ndarray[np.float_t, ndim=1] stateavg = state[:,0].copy()
     # positive phase
     # calculate hidden unit state given the visibles (training vec)
     state[nvisible:] = logit(np.dot(W.T, state[:nvisible]) + hbias)
@@ -376,8 +378,15 @@ cdef inline sample_sa(np.ndarray[np.float_t, ndim=2] state,
         ghbias[:] = state[nvisible:].sum(axis=1).reshape(nhidden,1)
     # negative phase
     # run simulated annealing to estimate partition function
-    J += np.diag(np.concatenate((vbias[:,0], hbias[:,0])))
-    sa.Anneal_dense(sched, sweeps, state[:,0], J, rng)
+    # set diagonal to the biases
+    J[np.diag_indices(nvisible+nhidden)] = np.concatenate((vbias[:,0], 
+                                                           hbias[:,0]))
+    # convert state from bits to spins
+    stateitr = sa.bits2spins(state[:,0].copy())
+    # anneal
+    sa.Anneal_dense(sched, sweeps, stateitr, J, rng)
+    # convert back to binary and record
+    state[:,0] = sa.spins2bits(stateitr)
     # # loop over up-down passes (using the persistent negative Gibbs chain)
     # for k in xrange(cdk):
     #     # resample visible units (must use hidden states, not probabilities)
@@ -388,7 +397,17 @@ cdef inline sample_sa(np.ndarray[np.float_t, ndim=2] state,
     #     state[nvisible:] = hreconprobs > np.random.rand(nhidden,batchsize)
     # negative contribution
     if useprobs:
-        pass
+        for j in xrange(20):
+            stateitr = state[:,0].copy()
+            sa.Anneal_dense(sched, sweeps, stateitr, J, rng)
+            stateavg += stateitr
+        state[:, 0] = stateavg / 20.0
+        grad[:] = ((grad - np.dot(state[:nvisible], state[nvisible:].T)) /
+                   float(batchsize))
+        gvbias[:] = ((gvbias.T - state[:nvisible].sum(axis=1)) /
+                     float(batchsize)).T
+        ghbias[:] = ((ghbias.T - state[nvisible:].sum(axis=1)) /
+                     float(batchsize)).T
         # grad[:] = (grad - np.dot(vreconprobs, hreconprobs.T))/float(batchsize)
         # gvbias[:] = ((gvbias.T - vreconprobs.sum(axis=1)) /
         #              float(batchsize)).T
