@@ -381,12 +381,6 @@ cdef inline sample_sa(np.ndarray[np.float_t, ndim=2] state,
     # set diagonal to the biases
     J[np.diag_indices(nvisible+nhidden)] = np.concatenate((vbias[:,0], 
                                                            hbias[:,0]))
-    # convert state from bits to spins
-    stateitr = sa.bits2spins(state[:,0].copy())
-    # anneal
-    sa.Anneal_dense(sched, sweeps, stateitr, J, rng)
-    # convert back to binary and record
-    state[:,0] = sa.spins2bits(stateitr)
     # # loop over up-down passes (using the persistent negative Gibbs chain)
     # for k in xrange(cdk):
     #     # resample visible units (must use hidden states, not probabilities)
@@ -397,11 +391,17 @@ cdef inline sample_sa(np.ndarray[np.float_t, ndim=2] state,
     #     state[nvisible:] = hreconprobs > np.random.rand(nhidden,batchsize)
     # negative contribution
     if useprobs:
+        # take some samples
         for j in xrange(20):
-            stateitr = state[:,0].copy()
+            # convert state from bits to spins
+            stateitr = sa.bits2spins(state[:,0].copy())
+            # anneal
             sa.Anneal_dense(sched, sweeps, stateitr, J, rng)
+            # accumulate
             stateavg += stateitr
-        state[:, 0] = stateavg / 20.0
+        # switch back to binary representation (probability of unit k being on)
+        state[:,0] = (stateavg/20.0 + 1)/2.0
+        # update gradients
         grad[:] = ((grad - np.dot(state[:nvisible], state[nvisible:].T)) /
                    float(batchsize))
         gvbias[:] = ((gvbias.T - state[:nvisible].sum(axis=1)) /
@@ -414,6 +414,17 @@ cdef inline sample_sa(np.ndarray[np.float_t, ndim=2] state,
         # ghbias[:] = ((ghbias.T - hreconprobs.sum(axis=1)) /
         #              float(batchsize)).T
     else:
+        # convert state from bits to spins
+        # stateitr = sa.bits2spins(state[:,0].copy())
+        # random initial spin-state
+        stateitr = np.asarray(2*rng.random_integers(0,1,nvisible+nhidden) - 1,
+                              dtype=np.float)
+        # anneal
+        sa.Anneal_dense(sched, sweeps, stateitr, J, rng)
+        # convert back to binary and record
+        state[:,0] = sa.spins2bits(stateitr)
+        # print state[:,0]
+        # update gradients
         grad[:] = ((grad - np.dot(state[:nvisible], state[nvisible:].T)) /
                    float(batchsize))
         gvbias[:] = ((gvbias.T - state[:nvisible].sum(axis=1)) /
@@ -498,7 +509,7 @@ def train_restricted_sa(np.float_t [:, :] data,
         # examine hidden activations before training
         ax.matshow(logit(np.dot(W.T, firstdata) + hbias), 
                    cmap='Greys')
-        plt.savefig('figs_boltz_mnist/hidden_act_0.png')
+        plt.savefig('figs_boltz_mnist_sa/hidden_act_0.png')
         # plot histograms of weights and biases, and of the last gradient
         figh, axh = plt.subplots(2,3,figsize=(20,10))
         axh[0,0].hist(vbias)
@@ -513,7 +524,7 @@ def train_restricted_sa(np.float_t [:, :] data,
         axh[1,1].set_title("dW mean = "+str(np.mean(np.fabs(gw.ravel()*eta))))
         axh[1,2].hist(gh*eta)
         axh[1,2].set_title("dhbias mean = "+str(np.mean(np.fabs(gh*eta))))
-        figh.savefig('figs_boltz_mnist/hist_ep0.png')
+        figh.savefig('figs_boltz_mnist_sa/hist_ep0.png')
         plt.close(figh)
         # for plotting filters
         figf, axf = plt.subplots(1, 1, figsize=(20,15))
@@ -534,6 +545,7 @@ def train_restricted_sa(np.float_t [:, :] data,
                 # contr_div_batch(state, pchain, W, vbias, hbias, gw, gv, gh, 
                 #                 cdk, persistent, useprobs)
                 # update weights and biases
+                # print gw.sum(axis=1), gv.T, gh.T
                 W += (gw - W*wdecay)*eta
                 vbias += gv*eta
                 hbias += gh*eta
@@ -551,7 +563,7 @@ def train_restricted_sa(np.float_t [:, :] data,
             axh[1,1].set_title("dW mean = "+str(np.mean(np.fabs(gw.ravel()*eta))))
             axh[1,2].hist(gh*eta)
             axh[1,2].set_title("dhbias mean = "+str(np.mean(np.fabs(gh*eta))))
-            figh.savefig('figs_boltz_mnist/hist_ep'+str(ep+1))#+'_d'+str(idat))
+            figh.savefig('figs_boltz_mnist_sa/hist_ep'+str(ep+1))#+'_d'+str(idat))
             plt.close(figh)
             # plot the filters
             image = Image.fromarray(
@@ -563,11 +575,11 @@ def train_restricted_sa(np.float_t [:, :] data,
                     tile_spacing=(1, 1)
                 )
             )
-            image.save('figs_boltz_mnist/filters_%d.png' % (ep+1))
+            image.save('figs_boltz_mnist_sa/filters_%d.png' % (ep+1))
             # examine hidden activations during training
             ax.matshow(logit(np.dot(W.T, firstdata) + hbias), 
                        cmap='Greys')
-            fig.savefig('figs_boltz_mnist/hidden_act_'+str(ep+1)+'.png')
+            fig.savefig('figs_boltz_mnist_sa/hidden_act_'+str(ep+1)+'.png')
         plt.close(figf)
         plt.close(fig)
     else:

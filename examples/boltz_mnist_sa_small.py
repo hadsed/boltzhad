@@ -53,11 +53,11 @@ nhidrow = 4
 nhidcol = 28
 nhidden = nhidrow*nhidcol
 # number of MCMC steps in CD
-cdk = 5
+cdk = 0
 # number of training examples in batch update
 batchsize = 1
 # learning rate
-eta = 0.1
+eta = 0.001
 # training epochs
 # (if we're low on data, we can set this higher)
 epochs = 15
@@ -75,7 +75,7 @@ classes = range(10)
 # max training vectors is (by index):
 # [5923, 6742, 5958, 6131, 5842, 5421, 5918, 6265, 5851, 5949]
 # min of that is 5421
-nperclass = 500
+nperclass = 50
 # up-down iterations for sampling trained network
 kupdown_inp = 10
 # use a persistent chain?
@@ -104,21 +104,22 @@ hbias = rng.uniform(size=(nhidden,1), low=low, high=high)
 # vbias[vbias > 0] = np.log(vbias[vbias > 0])
 # vbias = np.zeros((nvisible,1))
 # hbias = -4.0*np.ones((nhidden,1))*0.0
+
 # train the weights (inplace)
 print("Beginning training...")
 sweeps = 1
 tempstart = 10.0
-tempend = 0.01
+tempend = 1.0
 tannealingsteps = 10
 trexp = (tempend/tempstart)**(1./tannealingsteps)
 sched = np.array([ tempstart*trexp**k
                    for k in xrange(tannealingsteps) ])
-useprobs = 0
 boltz.train_restricted_sa(datasp, W, vbias, hbias, eta, wdecay,
                           epochs, sched, sweeps, rng, debug,
                           useprobs)
 print("Training complete.")
-modelfname = 'figs_boltz_mnist/model.mat'
+# save model and parameters
+modelfname = 'figs_boltz_mnist_sa/model.mat'
 sio.savemat(modelfname, {'w': W, 'v': vbias, 'h': hbias})
 params = {'sched': list(sched),
           'sweeps': sweeps,
@@ -129,7 +130,7 @@ params = {'sched': list(sched),
           'trainingperclass': nperclass,
           'useprobs': useprobs,
           'initweights': (scale*low, scale*high)}
-with open('figs_boltz_mnist/params.txt', 'w') as f:
+with open('figs_boltz_mnist_sa/params.txt', 'w') as f:
     json.dump(params, f)
 print("Model saved to file \"%s\"." % modelfname)
 # plot the filters
@@ -142,5 +143,5 @@ image = Image.fromarray(
         tile_spacing=(1, 1)
         )
     )
-image.save('figs_boltz_mnist/filters.png')
+image.save('figs_boltz_mnist_sa/filters.png')
 print("Filters plotted.")
